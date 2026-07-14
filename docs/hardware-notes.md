@@ -92,3 +92,82 @@ you've used before — the common case, not an edge case). Fixed in
 `infra/bt/bluetoothctl_backend.py` by only matching lines starting with
 `[NEW]`; `bluetoothctl devices` (used for already-known devices) has its own
 separate parser since that output has no tags at all.
+
+## Stage 4: real print testing found we were fighting the wrong problem
+
+First real print through the actual app (`PrintJobManager`, not a probe
+script) printed only ~1.5 lines of a short paragraph before silently
+dropping the rest — no error, `done` status, chunks "successfully" sent.
+Shrinking `chunk_height_px` (180 → 50 → 30) partially helped but never fully
+fixed it, which pointed at the printer's own internal receive buffer
+overflowing (matches a `peripage-python` GitHub issue: buffer capacity
+~60 lines, excess data silently dropped, no error surfaced through the
+Bluetooth stack).
+
+**Got a real Bluetooth HCI snoop trace of the official Peripage Android app**
+printing to this exact unit (`adb bugreport`, extracted
+`FS/data/misc/bluetooth/logs/btsnoop_hci.log`, analyzed with `tshark`).
+Two findings from it, in order of how confident we are in each:
+
+1. **High confidence, applied as a real fix:** the official app sends row
+   data with *no manual delay at all* — ~200-byte frames every 2-4ms, an
+   entire short print's worth of data (4-6.5KB) in 50-140ms total, paced
+   only by natural Bluetooth transport speed. Our own `_ROW_DELAY_SECONDS`
+   was 0.05s/row — **15-30x slower**. Slow, evenly-spaced delivery appears to
+   desync the printer's own receive/print state machine (plausibly a
+   timeout expecting continuous input) rather than helping it — the
+   opposite of what Stage 0's small-image tests suggested. Changed the
+   default to 0.001s. Confirmed live: this measurably reduced data loss.
+   Combined with **not artificially chunking short documents** (a chunk
+   that already fits under `chunk_height_px` is sent as one continuous
+   `printImage()` call, matching the official app's one-reset()-per-image
+   pattern instead of one reset() per small app-chunk), a short test
+   paragraph finally printed correctly end-to-end.
+
+2. **Low confidence, applied as a labeled workaround, NOT a real fix — see
+   the `TODO` in `models/printer_specs.py`:** the trace's preamble bytes
+   decoded to a field reading `row_bytes=208` (1664px), not the peripage
+   library's hardcoded 216 (1728px) for A40. Reducing our rendered content
+   to 1664px (padded back out to the full 1728px canvas so
+   `printer.printImage()`'s forced resize doesn't stretch it) fixed text
+   getting clipped at the right edge. **This is a patch applied inside the
+   OLD protocol** (peripage's `0x1d763000` image opcode) — the official app
+   doesn't use that opcode at all. It uses a completely different,
+   unreverse-engineered opcode `0x1f 00 00 d0 01 ...` that we have not
+   implemented and only partially decoded. We don't actually know *why*
+   1664px is the right number (only that one trace byte suggested it), and
+   implementing the real `0x1f` protocol might make this workaround
+   unnecessary — or reveal a differently-shaped fix. Don't extend
+   `SAFE_CONTENT_WIDTH_PX` to other models by guessing; only add entries
+   backed by the same kind of real evidence.
+
+**Bonus bug found while writing a test for the width fix, not from
+hardware:** `_pad_to_canvas_width`/`_apply_margins` used
+`PIL.Image.new(image.mode, size, color=255)` to fill white space. For
+single-channel modes ("L", "1") that's correct, but for "RGB" (the normal
+case for a real photo or rendered PDF page, before our own 1-bit
+normalization) a bare int color only fills the *red* channel — producing
+red, which converts to a dark gray, not white. Fixed by converting to "L"
+immediately after rendering, before any padding step. Caught because a new
+test asserted the actual pixel value in the padded region instead of just
+image dimensions — dimension-only assertions had let this slide through
+earlier tests undetected.
+
+**Open, unexplained, and still live:** the last-printed portion of a
+document consistently comes out visibly darker/denser than earlier content,
+across multiple different chunk configurations — most plausibly cumulative
+thermal head warm-up (no way to confirm without the printer's own telemetry,
+which this protocol doesn't expose) and/or our adaptive cooldown pause
+(`_cooldown_seconds`) incidentally giving darker content more pre-print
+settle time. Not blocking — cosmetic — but a real "print from a cold start
+looks different than mid-job" characteristic worth knowing about. A
+possible future experiment: a short dummy warm-up pulse before real content
+starts.
+
+**Follow-up work this section should remind a future session to do:**
+Consider actually reverse-engineering and implementing the real `0x1f`
+protocol observed in the trace (would need more captures — different
+content sizes/darkness — to nail down the full header format and confirm
+whether it lifts the current chunk-height/width-safety workarounds
+entirely), rather than continuing to patch around the old `0x1d763000` path
+indefinitely.

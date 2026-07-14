@@ -1,24 +1,29 @@
 import queue
 import threading
 import uuid
+from datetime import datetime
 from tkinter import filedialog
 from typing import Any
 
 import customtkinter as ctk
 
 from periprint.infra.config_store import ConfigStore
+from periprint.infra.history_store import HistoryEntry, HistoryStore
 from periprint.infra.peripage_client import PeripageClient, PeripageConnectionError
 from periprint.models.document import DocumentItem, PrintSettings
-from periprint.models.enums import PrinterModel
+from periprint.models.enums import JobStatus, PrinterModel
+from periprint.models.job import PrintJob
 from periprint.models.printer_profile import PrinterProfile
-from periprint.models.printer_specs import NATIVE_WIDTH_PX
+from periprint.models.printer_specs import NATIVE_WIDTH_PX, safe_content_width_px
 from periprint.services.events import EventType
+from periprint.services.job_manager import PrintJobManager
 from periprint.services.pipeline import (
     DocumentPipeline,
     UnsupportedDocumentKindError,
     detect_document_kind,
 )
 from periprint.services.printer_manager import PrinterManager
+from periprint.ui.error_dialog import ErrorDialog
 from periprint.ui.preview_panel import PreviewPanel
 from periprint.ui.printer_panel import PrinterPanel
 from periprint.ui.queue_panel import QueuePanel
@@ -26,6 +31,7 @@ from periprint.ui.settings_dialog import SettingsDialog
 
 _DEFAULT_PREVIEW_MODEL = PrinterModel.A40
 _DEFAULT_CHUNK_HEIGHT_PX = 220
+_FINISHED_STATUSES = (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
 
 
 class MainWindow(ctk.CTk):
@@ -33,6 +39,7 @@ class MainWindow(ctk.CTk):
         self,
         printer_manager: PrinterManager | None = None,
         config_store: ConfigStore | None = None,
+        history_store: HistoryStore | None = None,
     ) -> None:
         super().__init__()
         self.title("PeriPrint")
@@ -41,12 +48,18 @@ class MainWindow(ctk.CTk):
         self._printer_manager = printer_manager or PrinterManager()
         self._config_store = config_store or ConfigStore()
         self._config = self._config_store.load()
+        self._history_store = history_store or HistoryStore()
         self._settings_dialog: SettingsDialog | None = None
+        self._error_dialog: ErrorDialog | None = None
         self._client: PeripageClient | None = None
         self._active_profile: PrinterProfile | None = None
         self._event_queue: queue.Queue[tuple[EventType, Any]] = queue.Queue()
         self._pipeline = DocumentPipeline()
         self._current_document: DocumentItem | None = None
+        self._job_manager = PrintJobManager(
+            self._pipeline, self._event_queue, client_provider=lambda: self._client
+        )
+        self._job_awaiting_reconnect_id: str | None = None
 
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -64,7 +77,12 @@ class MainWindow(ctk.CTk):
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        self.queue_panel = QueuePanel(body, on_select_file=self._handle_select_file)
+        self.queue_panel = QueuePanel(
+            body,
+            on_select_file=self._handle_select_file,
+            on_print_all=self._handle_print_all,
+            on_clear=self._handle_clear_queue,
+        )
         self.queue_panel.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
 
         self.preview_panel = PreviewPanel(
@@ -147,14 +165,24 @@ class MainWindow(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _resolve_render_target(self) -> tuple[int, int]:
-        """(width_px, chunk_height_px) — from the active profile if one is
-        selected, else sane defaults so preview still works with no
-        printer configured yet."""
-        if self._active_profile is not None:
-            width_px = NATIVE_WIDTH_PX[self._active_profile.model]
-            return width_px, self._active_profile.chunk_height_px
-        return NATIVE_WIDTH_PX[_DEFAULT_PREVIEW_MODEL], _DEFAULT_CHUNK_HEIGHT_PX
+    def _resolve_render_target(self) -> tuple[int, int, int]:
+        """(content_width_px, canvas_width_px, chunk_height_px) — from the
+        active profile if one is selected, else sane defaults so preview
+        still works with no printer configured yet. content_width_px is
+        the safe area content gets wrapped/fit into; canvas_width_px is the
+        full native width the final image is padded out to (see
+        printer_specs.SAFE_CONTENT_WIDTH_PX / DocumentPipeline)."""
+        model = (
+            self._active_profile.model
+            if self._active_profile is not None
+            else _DEFAULT_PREVIEW_MODEL
+        )
+        chunk_height_px = (
+            self._active_profile.chunk_height_px
+            if self._active_profile is not None
+            else _DEFAULT_CHUNK_HEIGHT_PX
+        )
+        return safe_content_width_px(model), NATIVE_WIDTH_PX[model], chunk_height_px
 
     def _handle_select_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -172,7 +200,7 @@ class MainWindow(ctk.CTk):
             self.status_bar.configure(text=f"Статус: формат файла не поддерживается — {path}")
             return
 
-        self._current_document = DocumentItem(
+        document = DocumentItem(
             id=str(uuid.uuid4()),
             source_path=path,
             kind=kind,
@@ -181,7 +209,25 @@ class MainWindow(ctk.CTk):
                 dithering=self.preview_panel.dithering_var.get(),
             ),
         )
+        self._current_document = document
         self._render_and_show_preview()
+
+        width_px, canvas_width_px, chunk_height_px = self._resolve_render_target()
+        job = PrintJob(
+            id=str(uuid.uuid4()),
+            document=document,
+            printer_profile_id=self._active_profile.id if self._active_profile else "",
+        )
+        self._job_manager.enqueue(job, width_px, chunk_height_px, canvas_width_px)
+        self.queue_panel.set_jobs(self._job_manager.list_jobs())
+
+    def _handle_print_all(self) -> None:
+        self._job_manager.start()
+        self.status_bar.configure(text="Статус: печать очереди запущена")
+
+    def _handle_clear_queue(self) -> None:
+        self._job_manager.clear_queue()
+        self.queue_panel.set_jobs(self._job_manager.list_jobs())
 
     def _handle_preview_settings_changed(self) -> None:
         if self._current_document is None:
@@ -194,9 +240,11 @@ class MainWindow(ctk.CTk):
         document = self._current_document
         if document is None:
             return
-        width_px, chunk_height_px = self._resolve_render_target()
+        width_px, canvas_width_px, chunk_height_px = self._resolve_render_target()
         try:
-            rendered = self._pipeline.render_document(document, width_px, chunk_height_px)
+            rendered = self._pipeline.render_document(
+                document, width_px, chunk_height_px, canvas_width_px
+            )
         except UnsupportedDocumentKindError:
             self.preview_panel.show_message(f"Формат {document.kind} пока не поддерживается")
             return
@@ -220,6 +268,9 @@ class MainWindow(ctk.CTk):
                     if self._active_profile is not None:
                         self._config.active_printer_id = self._active_profile.id
                         self._config_store.save(self._config)
+                    if self._job_awaiting_reconnect_id is not None:
+                        self._job_manager.retry_job(self._job_awaiting_reconnect_id)
+                        self._job_awaiting_reconnect_id = None
                 elif status == "disconnected":
                     self._client = None
                 self._refresh_active_profile()
@@ -229,5 +280,50 @@ class MainWindow(ctk.CTk):
                     self.printer_panel.set_status(f"Принтер: {self._active_profile.name} ● Error")
                 self.printer_panel.set_connect_button(text="Подключить", enabled=True)
                 self.status_bar.configure(text=f"Статус: ошибка подключения — {payload}")
+            elif event_type == EventType.PRINT_PROGRESS:
+                self._handle_print_progress(payload)
         if self.winfo_exists():
             self.after(100, self._poll_events)
+
+    def _handle_print_progress(self, job: PrintJob) -> None:
+        self.queue_panel.set_jobs(self._job_manager.list_jobs())
+
+        if job.status == JobStatus.PRINTING and job.total_chunks:
+            self.status_bar.configure(
+                text=f"Статус: печать — чанк {job.completed_chunks}/{job.total_chunks}"
+            )
+        elif job.status in _FINISHED_STATUSES:
+            printer_name = self._active_profile.name if self._active_profile else "?"
+            self._history_store.record(
+                HistoryEntry(
+                    id=job.id,
+                    source_path=job.document.source_path,
+                    printer_name=printer_name,
+                    status=job.status.value,
+                    created_at=job.created_at,
+                    finished_at=datetime.now(),
+                    error_message=job.error_message,
+                )
+            )
+            self.status_bar.configure(
+                text=f"Статус: {job.status.value} — {job.document.source_path}"
+            )
+        elif job.status == JobStatus.PAUSED_ERROR and self._error_dialog is None:
+            self._error_dialog = ErrorDialog(
+                self,
+                message=(
+                    f"Не удалось отправить чанк {job.completed_chunks + 1}/{job.total_chunks}.\n"
+                    f"{job.error_message}"
+                ),
+                on_reconnect=lambda: self._handle_error_reconnect(job.id),
+                on_cancel=lambda: self._handle_error_cancel(job.id),
+            )
+
+    def _handle_error_reconnect(self, job_id: str) -> None:
+        self._error_dialog = None
+        self._job_awaiting_reconnect_id = job_id
+        self._connect_async()
+
+    def _handle_error_cancel(self, job_id: str) -> None:
+        self._error_dialog = None
+        self._job_manager.cancel_job(job_id)

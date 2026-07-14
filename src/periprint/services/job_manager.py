@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import queue
+import threading
+import time
+from collections.abc import Callable
+
+import PIL.Image
+
+from periprint.infra.peripage_client import PeripageClient
+from periprint.models.enums import JobStatus
+from periprint.models.job import PrintJob
+from periprint.services.events import EventType
+from periprint.services.pipeline import DocumentPipeline
+
+_BASE_PAUSE_SECONDS = 1.0
+_DARK_THRESHOLD = 0.3
+_DARK_STREAK_EXTRA_SECONDS = 0.4
+_MAX_PAUSE_SECONDS = 5.0
+# Per-row delay inside a single printImage() call. Stage 0's own short
+# (40-150px) test images suggested delay=0.05 gave the best density, but a
+# real HCI Bluetooth trace of the official Peripage app (Stage 4, see
+# docs/hardware-notes.md) showed it sends rows with NO manual delay at all
+# — ~200-byte frames every 2-4ms, paced only by natural Bluetooth transport
+# speed. Confirmed live: 0.05s/row caused silent data loss on longer prints
+# (the printer's own receive buffer desyncs waiting on slow input), while a
+# near-zero delay fixed it. Kept nonzero only to avoid flooding the local
+# socket send buffer pointlessly, not for the printer's benefit.
+_ROW_DELAY_SECONDS = 0.001
+_PAGE_BREAK_SIZE = 60
+
+
+def _black_ratio(image: PIL.Image.Image) -> float:
+    total = image.width * image.height
+    if total == 0:
+        return 0.0
+    histogram = image.histogram()
+    return histogram[0] / total if histogram else 0.0
+
+
+def _cooldown_seconds(black_ratio: float, dark_streak: int) -> float:
+    """Adaptive inter-chunk pause (spec §4.3): flat base pause normally,
+    growing with consecutive dark chunks so a long dark run cools down more
+    — this is deliberately time.sleep()-based application logic, not
+    printBreak() (which feeds paper, see docs/hardware-notes.md /
+    Risk Flags: the two are different operations the spec's own wording
+    conflates)."""
+    if black_ratio < _DARK_THRESHOLD:
+        return _BASE_PAUSE_SECONDS
+    return min(_MAX_PAUSE_SECONDS, _BASE_PAUSE_SECONDS + _DARK_STREAK_EXTRA_SECONDS * dark_streak)
+
+
+class PrintJobManager:
+    """Queue + single worker thread. Renders lazily — only when a job is
+    actually taken up, never all queued documents' rasters at once (per the
+    spec's memory NFR). A chunk-send failure pauses the job (PAUSED_ERROR)
+    without losing progress: resuming re-renders the document but skips
+    chunks already sent, tracked via PrintJob.completed_chunks — so a
+    mid-print Bluetooth drop resumes from the last successful chunk, not
+    from the start."""
+
+    def __init__(
+        self,
+        pipeline: DocumentPipeline,
+        event_queue: queue.Queue[tuple[EventType, object]],
+        client_provider: Callable[[], PeripageClient | None],
+    ) -> None:
+        self._pipeline = pipeline
+        self._event_queue = event_queue
+        self._client_provider = client_provider
+        self._jobs: dict[str, PrintJob] = {}
+        self._order: list[str] = []
+        self._render_targets: dict[str, tuple[int, int, int]] = {}
+        self._lock = threading.Lock()
+        self._worker: threading.Thread | None = None
+
+    def enqueue(
+        self,
+        job: PrintJob,
+        width_px: int,
+        chunk_height_px: int,
+        canvas_width_px: int | None = None,
+    ) -> None:
+        """Adds the job as QUEUED but does NOT start printing — files
+        accumulate in the queue as the user picks them (spec journey 2.3);
+        printing only begins once start() is called ("Печать всё").
+        width_px is the safe content width content gets rendered/wrapped
+        into; canvas_width_px (defaults to width_px) is the full native
+        width the final image is padded out to before printing — see
+        DocumentPipeline.render_document / printer_specs.py."""
+        with self._lock:
+            self._jobs[job.id] = job
+            self._order.append(job.id)
+            self._render_targets[job.id] = (width_px, chunk_height_px, canvas_width_px or width_px)
+        self._emit(job)
+
+    def start(self) -> None:
+        self._ensure_worker()
+
+    def list_jobs(self) -> list[PrintJob]:
+        with self._lock:
+            return [self._jobs[job_id] for job_id in self._order]
+
+    def retry_job(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None and job.status == JobStatus.PAUSED_ERROR:
+                job.status = JobStatus.QUEUED
+                job.error_message = None
+        if job is not None:
+            self._emit(job)
+        self._ensure_worker()
+
+    def cancel_job(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None and job.status in (JobStatus.QUEUED, JobStatus.PAUSED_ERROR):
+                job.status = JobStatus.CANCELLED
+        if job is not None:
+            self._emit(job)
+
+    def clear_queue(self) -> None:
+        """Cancels anything not yet started and drops finished/cancelled
+        entries from the visible list. A job already RENDERING/PRINTING (or
+        PAUSED_ERROR, awaiting a user decision) is left alone — it's still
+        "in flight", not safely discardable mid-print."""
+        with self._lock:
+            remaining = []
+            for job_id in self._order:
+                job = self._jobs[job_id]
+                if job.status == JobStatus.QUEUED:
+                    job.status = JobStatus.CANCELLED
+                    continue
+                if job.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
+                    continue
+                remaining.append(job_id)
+            self._order = remaining
+
+    def _ensure_worker(self) -> None:
+        if self._worker is None or not self._worker.is_alive():
+            self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+            self._worker.start()
+
+    def _next_queued(self) -> PrintJob | None:
+        with self._lock:
+            for job_id in self._order:
+                job = self._jobs[job_id]
+                if job.status == JobStatus.QUEUED:
+                    return job
+        return None
+
+    def _worker_loop(self) -> None:
+        while True:
+            job = self._next_queued()
+            if job is None:
+                return
+            self._process_job(job)
+
+    def _emit(self, job: PrintJob) -> None:
+        self._event_queue.put((EventType.PRINT_PROGRESS, job))
+
+    def _process_job(self, job: PrintJob) -> None:
+        client = self._client_provider()
+        if client is None or not client.is_connected():
+            job.status = JobStatus.PAUSED_ERROR
+            job.error_message = "Принтер не подключён"
+            self._emit(job)
+            return
+
+        job.status = JobStatus.RENDERING
+        self._emit(job)
+
+        width_px, chunk_height_px, canvas_width_px = self._render_targets[job.id]
+        try:
+            rendered = self._pipeline.render_document(
+                job.document, width_px, chunk_height_px, canvas_width_px
+            )
+        except Exception as exc:
+            job.status = JobStatus.FAILED
+            job.error_message = str(exc)
+            self._emit(job)
+            return
+
+        job.total_chunks = sum(len(page.chunks) for page in rendered.pages)
+        job.status = JobStatus.PRINTING
+        self._emit(job)
+
+        chunk_index = 0
+        dark_streak = 0
+        for page_number, page in enumerate(rendered.pages):
+            is_last_page = page_number == len(rendered.pages) - 1
+
+            for chunk_number, chunk in enumerate(page.chunks):
+                is_last_chunk_of_page = chunk_number == len(page.chunks) - 1
+                already_sent = chunk_index < job.completed_chunks
+                chunk_index += 1
+                if already_sent:
+                    continue
+
+                try:
+                    client.print_image(chunk, delay=_ROW_DELAY_SECONDS)
+                except Exception as exc:
+                    job.status = JobStatus.PAUSED_ERROR
+                    job.error_message = str(exc)
+                    self._emit(job)
+                    return
+
+                job.completed_chunks += 1
+                self._emit(job)
+
+                if not (is_last_page and is_last_chunk_of_page):
+                    ratio = _black_ratio(chunk)
+                    dark_streak = dark_streak + 1 if ratio >= _DARK_THRESHOLD else 0
+                    time.sleep(_cooldown_seconds(ratio, dark_streak))
+
+            if not is_last_page:
+                try:
+                    client.print_break(_PAGE_BREAK_SIZE)
+                except Exception as exc:
+                    job.status = JobStatus.PAUSED_ERROR
+                    job.error_message = str(exc)
+                    self._emit(job)
+                    return
+
+        try:
+            client.print_break(_PAGE_BREAK_SIZE)
+        except Exception:
+            pass  # trailing tear-off feed is best-effort, not correctness-critical
+
+        job.status = JobStatus.DONE
+        self._emit(job)

@@ -45,6 +45,35 @@ def test_render_document_default_settings_include_bottom_margin(tmp_path: Path) 
     assert rendered.pages[0].image.height == 140
 
 
+def test_render_document_pads_to_canvas_width_without_stretching(tmp_path: Path) -> None:
+    """Content must be rendered at the safe content width and padded (not
+    stretched) out to the full canvas width — see printer_specs.py: feeding
+    printer.printImage() anything narrower than the model's native width
+    makes it stretch content into the physically-unreliable zone instead of
+    leaving it blank there."""
+    document = _image_document(tmp_path, width=100, height=50)
+    document.settings = PrintSettings(margin_top_px=0, margin_bottom_px=0)
+
+    rendered = DocumentPipeline().render_document(
+        document, width_px=100, chunk_height_px=200, canvas_width_px=150
+    )
+
+    page = rendered.pages[0]
+    assert page.image.width == 150
+    assert page.image.height == 50
+    # The padding (white) must be a plain right-side extension, not a
+    # rescale of the original 100px-wide content.
+    assert page.image.getpixel((149, 0)) != 0
+
+
+def test_render_document_canvas_width_defaults_to_width_px(tmp_path: Path) -> None:
+    document = _image_document(tmp_path, width=100, height=50)
+
+    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=200)
+
+    assert rendered.pages[0].image.width == 100
+
+
 def test_unsupported_kind_raises(tmp_path: Path) -> None:
     source_path = tmp_path / "note.md"
     source_path.write_text("# heading", encoding="utf-8")

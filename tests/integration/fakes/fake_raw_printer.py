@@ -14,6 +14,9 @@ class FakeRawPrinter:
         self.reset_calls = 0
         self.disconnect_calls = 0
         self.set_concentration_calls: list[tuple[int, bool]] = []
+        self.print_image_calls = 0
+        self.print_break_calls = 0
+        self.fail_print_image_on_call: int | None = None
         self._fail_connects = fail_connects
 
     def connect(self) -> None:
@@ -36,10 +39,12 @@ class FakeRawPrinter:
         self.set_concentration_calls.append((concentration, wait))
 
     def printBreak(self, size: int = 0x40) -> None:
-        pass
+        self.print_break_calls += 1
 
     def printImage(self, img: Any, delay: float = 0.01) -> None:
-        pass
+        self.print_image_calls += 1
+        if self.fail_print_image_on_call == self.print_image_calls:
+            raise OSError("simulated mid-print connection drop")
 
     def getDeviceBattery(self) -> int:
         return 100

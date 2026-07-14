@@ -60,9 +60,26 @@ def _apply_margins(image: PIL.Image.Image, settings: PrintSettings) -> PIL.Image
     return canvas
 
 
+def _pad_to_canvas_width(image: PIL.Image.Image, canvas_width_px: int) -> PIL.Image.Image:
+    """Widens (never stretches) content to canvas_width_px by padding white
+    on the right. Needed because printer.printImage() unconditionally
+    resizes its input to the model's full native width — feeding it
+    anything narrower would silently *stretch* content into the unsafe
+    zone instead of leaving it blank there (see printer_specs.py)."""
+    if image.width >= canvas_width_px:
+        return image
+    canvas = PIL.Image.new(image.mode, (canvas_width_px, image.height), color=255)
+    canvas.paste(image, (0, 0))
+    return canvas
+
+
 class DocumentPipeline:
     def render_document(
-        self, document: DocumentItem, width_px: int, chunk_height_px: int
+        self,
+        document: DocumentItem,
+        width_px: int,
+        chunk_height_px: int,
+        canvas_width_px: int | None = None,
     ) -> RenderedDocument:
         renderer = _RENDERERS.get(document.kind)
         if renderer is None:
@@ -70,10 +87,21 @@ class DocumentPipeline:
 
         settings = document.settings
         raw_pages = renderer.render(document.source_path, width_px, settings.fit_mode)
+        target_canvas_width = canvas_width_px or width_px
 
         pages = []
         for raw_page in raw_pages:
-            padded = _apply_margins(raw_page, settings)
+            # Convert to a single-channel mode *before* any white-fill
+            # padding: PIL.Image.new(mode, size, color=255) only broadcasts
+            # a bare int to every channel for single-channel modes. For
+            # "RGB" (the common case — real photos/PDF pages), color=255
+            # fills only the red channel, i.e. produces red, not white —
+            # which then converts to a *dark* gray, not blank space. Caught
+            # by a test that actually checked the padded pixel's value
+            # rather than just image dimensions.
+            grayscale = raw_page.convert("L")
+            widened = _pad_to_canvas_width(grayscale, target_canvas_width)
+            padded = _apply_margins(widened, settings)
             normalized = normalize_to_1bit(padded, settings.dithering)
             chunks = slice_into_chunks(normalized, chunk_height_px)
             pages.append(RenderedPage(image=normalized, chunks=chunks))
