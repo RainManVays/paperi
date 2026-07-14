@@ -1,8 +1,16 @@
+import customtkinter as ctk
+
+from periprint.infra.config_store import ConfigStore
+from periprint.services.printer_manager import PrinterManager
 from periprint.ui.main_window import MainWindow
 
 
 def main() -> None:
-    window = MainWindow()
+    config = ConfigStore().load()
+    ctk.set_appearance_mode(config.theme)
+
+    printer_manager = PrinterManager()
+    window = MainWindow(printer_manager=printer_manager)
     window.mainloop()
 
 
