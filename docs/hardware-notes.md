@@ -106,8 +106,12 @@ Bluetooth stack).
 
 **Got a real Bluetooth HCI snoop trace of the official Peripage Android app**
 printing to this exact unit (`adb bugreport`, extracted
-`FS/data/misc/bluetooth/logs/btsnoop_hci.log`, analyzed with `tshark`).
-Two findings from it, in order of how confident we are in each:
+`FS/data/misc/bluetooth/logs/btsnoop_hci.log`, analyzed with `tshark`). Full
+byte-level breakdown (every opcode seen, timing stats, what's confirmed vs.
+speculative) is in
+[`docs/bluetooth-protocol-trace-analysis.md`](bluetooth-protocol-trace-analysis.md)
+— summary of the two findings that actually changed code, in order of how
+confident we are in each:
 
 1. **High confidence, applied as a real fix:** the official app sends row
    data with *no manual delay at all* — ~200-byte frames every 2-4ms, an
