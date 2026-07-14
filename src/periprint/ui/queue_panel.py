@@ -1,8 +1,15 @@
+from collections.abc import Callable
+
 import customtkinter as ctk
 
 
 class QueuePanel(ctk.CTkFrame):
-    def __init__(self, master: ctk.CTkBaseClass, **kwargs):
+    def __init__(
+        self,
+        master: ctk.CTkBaseClass,
+        on_select_file: Callable[[], None] | None = None,
+        **kwargs,
+    ):
         super().__init__(master, **kwargs)
 
         title = ctk.CTkLabel(self, text="ОЧЕРЕДЬ ПЕЧАТИ", font=ctk.CTkFont(weight="bold"))
@@ -19,8 +26,11 @@ class QueuePanel(ctk.CTkFrame):
             height=80,
             fg_color=("gray85", "gray20"),
             corner_radius=8,
+            cursor="hand2",
         )
         self.dropzone.pack(fill="x", padx=8, pady=8)
+        if on_select_file is not None:
+            self.dropzone.bind("<Button-1>", lambda _event: on_select_file())
 
         button_row = ctk.CTkFrame(self, fg_color="transparent")
         button_row.pack(fill="x", padx=8, pady=(0, 8))

@@ -1,18 +1,31 @@
 import queue
 import threading
+import uuid
+from tkinter import filedialog
 from typing import Any
 
 import customtkinter as ctk
 
 from periprint.infra.config_store import ConfigStore
 from periprint.infra.peripage_client import PeripageClient, PeripageConnectionError
+from periprint.models.document import DocumentItem, PrintSettings
+from periprint.models.enums import PrinterModel
 from periprint.models.printer_profile import PrinterProfile
+from periprint.models.printer_specs import NATIVE_WIDTH_PX
 from periprint.services.events import EventType
+from periprint.services.pipeline import (
+    DocumentPipeline,
+    UnsupportedDocumentKindError,
+    detect_document_kind,
+)
 from periprint.services.printer_manager import PrinterManager
 from periprint.ui.preview_panel import PreviewPanel
 from periprint.ui.printer_panel import PrinterPanel
 from periprint.ui.queue_panel import QueuePanel
 from periprint.ui.settings_dialog import SettingsDialog
+
+_DEFAULT_PREVIEW_MODEL = PrinterModel.A40
+_DEFAULT_CHUNK_HEIGHT_PX = 220
 
 
 class MainWindow(ctk.CTk):
@@ -32,6 +45,8 @@ class MainWindow(ctk.CTk):
         self._client: PeripageClient | None = None
         self._active_profile: PrinterProfile | None = None
         self._event_queue: queue.Queue[tuple[EventType, Any]] = queue.Queue()
+        self._pipeline = DocumentPipeline()
+        self._current_document: DocumentItem | None = None
 
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -49,10 +64,12 @@ class MainWindow(ctk.CTk):
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        self.queue_panel = QueuePanel(body)
+        self.queue_panel = QueuePanel(body, on_select_file=self._handle_select_file)
         self.queue_panel.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
 
-        self.preview_panel = PreviewPanel(body)
+        self.preview_panel = PreviewPanel(
+            body, on_settings_changed=self._handle_preview_settings_changed
+        )
         self.preview_panel.grid(row=0, column=1, sticky="nsew", padx=(4, 8), pady=8)
 
         self.status_bar = ctk.CTkLabel(self, text="Статус: готово", anchor="w")
@@ -129,6 +146,69 @@ class MainWindow(ctk.CTk):
             self._event_queue.put((EventType.CONNECTION_STATUS, ("disconnected", None)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _resolve_render_target(self) -> tuple[int, int]:
+        """(width_px, chunk_height_px) — from the active profile if one is
+        selected, else sane defaults so preview still works with no
+        printer configured yet."""
+        if self._active_profile is not None:
+            width_px = NATIVE_WIDTH_PX[self._active_profile.model]
+            return width_px, self._active_profile.chunk_height_px
+        return NATIVE_WIDTH_PX[_DEFAULT_PREVIEW_MODEL], _DEFAULT_CHUNK_HEIGHT_PX
+
+    def _handle_select_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Выбрать файл для печати",
+            filetypes=[
+                ("Поддерживаемые файлы", "*.png *.jpg *.jpeg *.bmp *.txt *.pdf"),
+                ("Все файлы", "*.*"),
+            ],
+        )
+        if not path:
+            return
+
+        kind = detect_document_kind(path)
+        if kind is None:
+            self.status_bar.configure(text=f"Статус: формат файла не поддерживается — {path}")
+            return
+
+        self._current_document = DocumentItem(
+            id=str(uuid.uuid4()),
+            source_path=path,
+            kind=kind,
+            settings=PrintSettings(
+                fit_mode=self.preview_panel.fit_mode_var.get(),
+                dithering=self.preview_panel.dithering_var.get(),
+            ),
+        )
+        self._render_and_show_preview()
+
+    def _handle_preview_settings_changed(self) -> None:
+        if self._current_document is None:
+            return
+        self._current_document.settings.fit_mode = self.preview_panel.fit_mode_var.get()
+        self._current_document.settings.dithering = self.preview_panel.dithering_var.get()
+        self._render_and_show_preview()
+
+    def _render_and_show_preview(self) -> None:
+        document = self._current_document
+        if document is None:
+            return
+        width_px, chunk_height_px = self._resolve_render_target()
+        try:
+            rendered = self._pipeline.render_document(document, width_px, chunk_height_px)
+        except UnsupportedDocumentKindError:
+            self.preview_panel.show_message(f"Формат {document.kind} пока не поддерживается")
+            return
+        except Exception as exc:
+            self.preview_panel.show_message(f"Ошибка рендера: {exc}")
+            return
+
+        self.preview_panel.show_preview(rendered.pages[0].image)
+        total_chunks = sum(len(page.chunks) for page in rendered.pages)
+        self.status_bar.configure(
+            text=f"Статус: превью готово — {len(rendered.pages)} стр., {total_chunks} чанков"
+        )
 
     def _poll_events(self) -> None:
         while not self._event_queue.empty():
