@@ -161,6 +161,45 @@ def test_printer_abort_status_pauses_job_mid_print(tmp_path: Path) -> None:
     remote_sock.close()
 
 
+def test_request_stop_cancels_an_actively_printing_job(tmp_path: Path) -> None:
+    """Stage 5 M5.4 "Стоп" button — request_stop() must interrupt a job
+    that's actively PRINTING right now, not just refuse to start a new
+    one (already cancel_job()'s job, for QUEUED/PAUSED_ERROR only)."""
+
+    class StopAfterNCalls(FakeRawPrinter):
+        def __init__(self, stop_after: int) -> None:
+            super().__init__()
+            self._stop_after = stop_after
+
+        def tellPrinter(self, byteseq: bytes) -> None:
+            super().tellPrinter(byteseq)
+            if bytes(byteseq).startswith(b"\x1d\x76\x30\x00") and (
+                self.image_send_calls == self._stop_after
+            ):
+                manager.request_stop(job.id)
+
+    fake = StopAfterNCalls(stop_after=2)
+    client = _connected_client(fake)
+    event_queue: queue.Queue = queue.Queue()
+    manager = PrintJobManager(DocumentPipeline(), event_queue, client_provider=lambda: client)
+
+    document = _make_text_document(tmp_path, lines=100)
+    job = PrintJob(id=str(uuid.uuid4()), document=document, printer_profile_id="p1")
+    manager.enqueue(job, width_px=384, chunk_height_px=15)
+    manager._process_job(job)
+
+    assert job.status == JobStatus.CANCELLED
+    assert job.completed_chunks == 2
+    assert job.completed_chunks < job.total_chunks
+
+
+def test_request_stop_is_a_no_op_for_a_job_not_currently_processing() -> None:
+    event_queue: queue.Queue = queue.Queue()
+    manager = PrintJobManager(DocumentPipeline(), event_queue, client_provider=lambda: None)
+
+    manager.request_stop("no-such-job")  # must not raise
+
+
 def test_multi_page_document_gets_page_break_between_pages(tmp_path: Path) -> None:
     import fitz
 

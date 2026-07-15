@@ -45,14 +45,6 @@ class PreviewPanel(ctk.CTkFrame):
         )
         settings_title.pack(anchor="w", padx=8, pady=(8, 0))
 
-        self.concentration_slider = ctk.CTkSlider(self, from_=0, to=2, number_of_steps=2)
-        self.concentration_slider.set(1)
-        self.concentration_slider.pack(fill="x", padx=8, pady=(4, 0))
-
-        self.break_slider = ctk.CTkSlider(self, from_=0, to=255)
-        self.break_slider.set(60)
-        self.break_slider.pack(fill="x", padx=8, pady=(4, 0))
-
         self.fit_mode_var = ctk.StringVar(value="fit_width")
         fit_row = ctk.CTkFrame(self, fg_color="transparent")
         fit_row.pack(fill="x", padx=8, pady=(8, 0))
@@ -74,7 +66,7 @@ class PreviewPanel(ctk.CTkFrame):
         self.dithering_var = ctk.BooleanVar(value=True)
         self.dithering_checkbox = ctk.CTkCheckBox(
             self,
-            text="Дизеринг",
+            text="Дизеринг (полутона точками — для фото; выключить для чёткого текста)",
             variable=self.dithering_var,
             command=self._handle_settings_changed,
         )

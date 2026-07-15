@@ -99,6 +99,10 @@ class PrintJobManager:
         self._render_targets: dict[str, tuple[int, int, int]] = {}
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
+        # job_id -> stop flag, only present while that job is actually
+        # being processed (_process_job() adds/removes its own entry) —
+        # see request_stop().
+        self._stop_events: dict[str, threading.Event] = {}
 
     def enqueue(
         self,
@@ -146,21 +150,43 @@ class PrintJobManager:
             self._emit(job)
 
     def clear_queue(self) -> None:
-        """Cancels anything not yet started and drops finished/cancelled
-        entries from the visible list. A job already RENDERING/PRINTING (or
-        PAUSED_ERROR, awaiting a user decision) is left alone — it's still
-        "in flight", not safely discardable mid-print."""
+        """Cancels anything not actively communicating with the printer
+        right now and drops finished/cancelled entries from the visible
+        list. QUEUED and PAUSED_ERROR are both safe to cancel outright —
+        neither is holding an open exchange with the printer at this
+        instant (PAUSED_ERROR is just sitting there, already stopped,
+        waiting on a user decision; see also retry_job()/move_job()'s own
+        "is this job actually QUEUED" guards). Only RENDERING/PRINTING is
+        left alone, since that one genuinely is mid-flight. Originally
+        left PAUSED_ERROR untouched too — that turned out to be a real
+        bug report ("Очистить ничего не делает" whenever the queue held
+        an errored job)."""
         with self._lock:
             remaining = []
             for job_id in self._order:
                 job = self._jobs[job_id]
-                if job.status == JobStatus.QUEUED:
+                if job.status in (JobStatus.QUEUED, JobStatus.PAUSED_ERROR):
                     job.status = JobStatus.CANCELLED
                     continue
                 if job.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED):
                     continue
                 remaining.append(job_id)
             self._order = remaining
+
+    def request_stop(self, job_id: str) -> None:
+        """User-initiated stop for a job that's actually RENDERING/
+        PRINTING right now — distinct from cancel_job()/clear_queue()
+        (which only ever touch QUEUED/PAUSED_ERROR, jobs not actively
+        exchanging data with the printer). Checked at the same points
+        _process_job() already checks for a printer-pushed abort signal;
+        ends the job as CANCELLED, not PAUSED_ERROR, since this was a
+        deliberate user choice, not something to "reconnect and retry".
+        A no-op if the job isn't currently being processed — there's
+        nothing running to stop."""
+        with self._lock:
+            event = self._stop_events.get(job_id)
+        if event is not None:
+            event.set()
 
     def move_job(self, job_id: str, delta: int) -> None:
         """Stage 5 M5.4 queue reorder. delta<0 moves the job earlier
@@ -237,6 +263,20 @@ class PrintJobManager:
                 last_status_reason.append(meaning)
                 abort_requested.set()
 
+        # User-initiated stop (request_stop(), Stage 5 M5.4 "Стоп" button)
+        # — separate flag/outcome from the printer-pushed abort above: a
+        # deliberate stop ends the job as CANCELLED, not PAUSED_ERROR.
+        stop_requested = threading.Event()
+        with self._lock:
+            self._stop_events[job.id] = stop_requested
+
+        def bail_if_stop_requested() -> bool:
+            if stop_requested.is_set():
+                job.status = JobStatus.CANCELLED
+                self._emit(job)
+                return True
+            return False
+
         try:
             client.start_status_listening(handle_status)
         except Exception as exc:
@@ -279,6 +319,8 @@ class PrintJobManager:
                 is_last_page = page_number == len(rendered.pages) - 1
 
                 for chunk_number, chunk in enumerate(page.chunks):
+                    if bail_if_stop_requested():
+                        return
                     if abort_requested.is_set():
                         job.status = JobStatus.PAUSED_ERROR
                         job.error_message = f"Принтер сообщил: {last_status_reason[-1]}"
@@ -317,6 +359,8 @@ class PrintJobManager:
                         time.sleep(_cooldown_seconds(ratio, dark_streak))
 
                 if not is_last_page:
+                    if bail_if_stop_requested():
+                        return
                     try:
                         client.print_break(_PAGE_BREAK_SIZE)
                     except Exception as exc:
@@ -339,3 +383,5 @@ class PrintJobManager:
             self._emit(job)
         finally:
             client.stop_status_listening()
+            with self._lock:
+                self._stop_events.pop(job.id, None)

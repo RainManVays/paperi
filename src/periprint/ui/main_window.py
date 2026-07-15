@@ -147,6 +147,8 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
             on_print_all=self._handle_print_all,
             on_clear=self._handle_clear_queue,
             on_move_job=self._handle_move_job,
+            on_stop_job=self._handle_stop_job,
+            on_resume_job=self._handle_resume_job,
         )
         self.queue_panel.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
 
@@ -353,6 +355,13 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         self.queue_panel.set_jobs(self._job_manager.list_jobs())
 
     def _handle_print_all(self) -> None:
+        # Entry widgets (page_range/copies, see PreviewPanel) only commit
+        # into PrintSettings on FocusOut/Return — clicking straight from
+        # one of those fields to this button doesn't reliably fire that
+        # first. Force a final sync here so whatever's currently typed is
+        # what actually prints, not a stale/default value (was a real
+        # reported bug: setting a page range then printing used all pages).
+        self._handle_preview_settings_changed()
         self._job_manager.start()
         self.status_bar.configure(text="Статус: печать очереди запущена")
 
@@ -375,6 +384,18 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         # ...)) — refreshing here as well makes the reorder buttons feel
         # immediate instead of visibly laggy.
         self.queue_panel.set_jobs(self._job_manager.list_jobs())
+
+    def _handle_stop_job(self, job_id: str) -> None:
+        self._job_manager.request_stop(job_id)
+
+    def _handle_resume_job(self, job_id: str) -> None:
+        # No point going through a whole reconnect cycle if we're already
+        # connected — that's only needed when the pause was caused by (or
+        # is now compounded by) a lost connection.
+        if self._client is not None and self._client.is_connected():
+            self._job_manager.retry_job(job_id)
+        else:
+            self._handle_error_reconnect(job_id)
 
     def _handle_preview_settings_changed(self) -> None:
         if self._current_document is None:
@@ -404,10 +425,6 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
             return
 
         self.preview_panel.show_preview(rendered.pages[0].image)
-        total_chunks = sum(len(page.chunks) for page in rendered.pages)
-        self.status_bar.configure(
-            text=f"Статус: превью готово — {len(rendered.pages)} стр., {total_chunks} чанков"
-        )
 
     def _poll_events(self) -> None:
         while not self._event_queue.empty():

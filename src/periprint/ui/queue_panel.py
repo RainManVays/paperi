@@ -16,6 +16,7 @@ _STATUS_LABELS = {
     JobStatus.FAILED: "не удалось",
     JobStatus.CANCELLED: "отменено",
 }
+_ACTIVE_STATUSES = (JobStatus.RENDERING, JobStatus.PRINTING)
 
 
 def _format_job_line(job: PrintJob) -> str:
@@ -38,20 +39,32 @@ class QueuePanel(ctk.CTkFrame):
         on_print_all: Callable[[], None] | None = None,
         on_clear: Callable[[], None] | None = None,
         on_move_job: Callable[[str, int], None] | None = None,
+        on_stop_job: Callable[[str], None] | None = None,
+        on_resume_job: Callable[[str], None] | None = None,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
         self._on_move_job = on_move_job
+        self._on_stop_job = on_stop_job
+        self._on_resume_job = on_resume_job
         self._row_widgets: list[ctk.CTkFrame] = []
 
-        title = ctk.CTkLabel(self, text="ОЧЕРЕДЬ ПЕЧАТИ", font=ctk.CTkFont(weight="bold"))
-        title.pack(anchor="w", padx=8, pady=(8, 0))
+        # grid, not pack: the queue list and the dropzone previously split
+        # space via pack's leftover-space rule, which handed the dropzone
+        # only its fixed minimum (80px) and gave the list everything
+        # else — reported as "очередь занимает слишком много места".
+        # Equal-weight grid rows give them an even 50/50 split instead.
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
-        # A scrollable frame of per-job rows (not the previous read-only
-        # CTkTextbox) — needed so each QUEUED job can carry its own
-        # move-up/move-down buttons (Stage 5 M5.4 reorder).
-        self.queue_list = ctk.CTkScrollableFrame(self, height=150)
-        self.queue_list.pack(fill="both", expand=True, padx=8, pady=8)
+        title = ctk.CTkLabel(self, text="ОЧЕРЕДЬ ПЕЧАТИ", font=ctk.CTkFont(weight="bold"))
+        title.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 0))
+
+        # A scrollable frame of per-job rows (not a read-only CTkTextbox)
+        # — needed so each job can carry its own move/stop/resume buttons.
+        self.queue_list = ctk.CTkScrollableFrame(self)
+        self.queue_list.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
 
         self._empty_label = ctk.CTkLabel(self.queue_list, text="(очередь пуста)")
         self._empty_label.pack(anchor="w")
@@ -59,12 +72,11 @@ class QueuePanel(ctk.CTkFrame):
         self.dropzone = ctk.CTkLabel(
             self,
             text="Перетащите файлы сюда\nили нажмите для выбора",
-            height=80,
             fg_color=("gray85", "gray20"),
             corner_radius=8,
             cursor="hand2",
         )
-        self.dropzone.pack(fill="x", padx=8, pady=8)
+        self.dropzone.grid(row=2, column=0, sticky="nsew", padx=8, pady=8)
         if on_select_file is not None:
             self.dropzone.bind("<Button-1>", lambda _event: on_select_file())
         if on_files_dropped is not None:
@@ -75,7 +87,7 @@ class QueuePanel(ctk.CTkFrame):
             )
 
         button_row = ctk.CTkFrame(self, fg_color="transparent")
-        button_row.pack(fill="x", padx=8, pady=(0, 8))
+        button_row.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         self.print_all_button = ctk.CTkButton(button_row, text="Печать всё", command=on_print_all)
         self.print_all_button.pack(side="left", padx=(0, 8))
@@ -96,9 +108,32 @@ class QueuePanel(ctk.CTkFrame):
         for job in jobs:
             row = ctk.CTkFrame(self.queue_list, fg_color="transparent")
             row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=_format_job_line(job), anchor="w").pack(
-                side="left", fill="x", expand=True
+            # grid, not pack, within the row: pack's "first widget with
+            # expand=True claims space greedily" rule fought with the
+            # label's dynamic wraplength here — a long, wrapped error
+            # message ended up claiming ~all of the row's width before
+            # pack ever got to the trailing buttons, squeezing e.g.
+            # "Продолжить" down to a 1px-wide, invisible-but-present
+            # button (found by inspecting winfo_width() directly, not
+            # visible at all in a screenshot). grid's column weights
+            # reserve the button columns' natural width up front, giving
+            # column 0 (the label) only whatever's actually left.
+            row.grid_columnconfigure(0, weight=1)
+            label = ctk.CTkLabel(row, text=_format_job_line(job), anchor="w", justify="left")
+            label.grid(row=0, column=0, sticky="ew")
+            # CTkLabel doesn't wrap by default — a long error message (a
+            # printer status string, or an exception's str()) just ran
+            # off the edge instead. wraplength needs an actual pixel
+            # value, not "fill the available space" like pack/grid do
+            # for geometry, so it's kept in sync via <Configure> as the
+            # label's own allocated width changes (window resize, panel
+            # split, etc.), not set once at creation time.
+            label.bind(
+                "<Configure>", lambda event, widget=label: widget.configure(wraplength=event.width)
             )
+
+            column = 1
+
             # Only QUEUED jobs are meaningfully reorderable — see
             # PrintJobManager.move_job()'s own docstring for why swapping
             # past an already-started/finished job wouldn't do anything.
@@ -108,11 +143,34 @@ class QueuePanel(ctk.CTkFrame):
                     text="▲",
                     width=28,
                     command=lambda job_id=job.id: self._on_move_job(job_id, -1),
-                ).pack(side="left", padx=(4, 0))
+                ).grid(row=0, column=column, padx=(4, 0))
+                column += 1
                 ctk.CTkButton(
                     row,
                     text="▼",
                     width=28,
                     command=lambda job_id=job.id: self._on_move_job(job_id, 1),
-                ).pack(side="left", padx=(4, 0))
+                ).grid(row=0, column=column, padx=(4, 0))
+                column += 1
+
+            if self._on_stop_job is not None and job.status in _ACTIVE_STATUSES:
+                ctk.CTkButton(
+                    row,
+                    text="Стоп",
+                    width=56,
+                    fg_color="darkred",
+                    hover_color="firebrick",
+                    command=lambda job_id=job.id: self._on_stop_job(job_id),
+                ).grid(row=0, column=column, padx=(4, 0))
+                column += 1
+
+            if self._on_resume_job is not None and job.status == JobStatus.PAUSED_ERROR:
+                ctk.CTkButton(
+                    row,
+                    text="Продолжить",
+                    width=90,
+                    command=lambda job_id=job.id: self._on_resume_job(job_id),
+                ).grid(row=0, column=column, padx=(4, 0))
+                column += 1
+
             self._row_widgets.append(row)
