@@ -162,6 +162,34 @@ class PrintJobManager:
                 remaining.append(job_id)
             self._order = remaining
 
+    def move_job(self, job_id: str, delta: int) -> None:
+        """Stage 5 M5.4 queue reorder. delta<0 moves the job earlier
+        (prints sooner), delta>0 later. Only ever swaps with the nearest
+        *other still-QUEUED* neighbor, skipping past anything else
+        (RENDERING/PRINTING/finished) in between: the worker's
+        _next_queued() only ever cares about relative order among QUEUED
+        jobs, so swapping past a job that's already started (or already
+        done) wouldn't change execution order, only produce a
+        confusing-looking list. A no-op (not an error) if the job itself
+        isn't QUEUED or there's no QUEUED neighbor in that direction."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != JobStatus.QUEUED:
+                return
+            index = self._order.index(job_id)
+            step = 1 if delta > 0 else -1
+            neighbor_index = index + step
+            while 0 <= neighbor_index < len(self._order):
+                neighbor_id = self._order[neighbor_index]
+                if self._jobs[neighbor_id].status == JobStatus.QUEUED:
+                    self._order[index], self._order[neighbor_index] = (
+                        self._order[neighbor_index],
+                        self._order[index],
+                    )
+                    break
+                neighbor_index += step
+        self._emit(job)
+
     def _ensure_worker(self) -> None:
         if self._worker is None or not self._worker.is_alive():
             self._worker = threading.Thread(target=self._worker_loop, daemon=True)

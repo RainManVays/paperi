@@ -7,20 +7,32 @@ from periprint.models.enums import PrinterModel
 from periprint.services.printer_manager import PrinterManager
 from periprint.ui.scan_dialog import ScanDialog
 
+_THEME_LABELS = {"dark": "Тёмная", "light": "Светлая"}
+_THEME_BY_LABEL = {label: theme for theme, label in _THEME_LABELS.items()}
+
 
 class SettingsDialog(ctk.CTkToplevel):
+    """Titled "Принтеры" (periprint-spec.md §7.2 item 3) but also carries
+    the one Stage 5 M5.4 app-level setting implemented so far (theme,
+    §7.2 item 4) — a whole separate "Настройки → Приложение" dialog for a
+    single toggle isn't worth it yet; split it out if/when more
+    app-level settings (autostart, default chunk height, etc.) land."""
+
     def __init__(
         self,
         master: ctk.CTk,
         printer_manager: PrinterManager,
         on_profiles_changed: Callable[[], None] | None = None,
+        current_theme: str = "dark",
+        on_theme_changed: Callable[[str], None] | None = None,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
         self.title("Настройки → Принтеры")
-        self.geometry("420x480")
+        self.geometry("420x560")
         self._printer_manager = printer_manager
         self._on_profiles_changed = on_profiles_changed
+        self._on_theme_changed = on_theme_changed
 
         ctk.CTkLabel(self, text="Принтеры", font=ctk.CTkFont(weight="bold")).pack(
             anchor="w", padx=12, pady=(12, 0)
@@ -50,6 +62,26 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self.save_button = ctk.CTkButton(form, text="Сохранить профиль", command=self._handle_save)
         self.save_button.pack(fill="x", pady=(4, 0))
+
+        ctk.CTkLabel(self, text="Приложение", font=ctk.CTkFont(weight="bold")).pack(
+            anchor="w", padx=12, pady=(16, 0)
+        )
+        theme_row = ctk.CTkFrame(self, fg_color="transparent")
+        theme_row.pack(fill="x", padx=12, pady=8)
+        ctk.CTkLabel(theme_row, text="Тема:").pack(side="left")
+        self.theme_var = ctk.StringVar(value=_THEME_LABELS.get(current_theme, "Тёмная"))
+        ctk.CTkOptionMenu(
+            theme_row,
+            variable=self.theme_var,
+            values=list(_THEME_LABELS.values()),
+            command=self._handle_theme_changed,
+        ).pack(side="left", padx=(8, 0))
+
+    def _handle_theme_changed(self, label: str) -> None:
+        theme = _THEME_BY_LABEL[label]
+        ctk.set_appearance_mode(theme)
+        if self._on_theme_changed:
+            self._on_theme_changed(theme)
 
     def _refresh_profiles_list(self) -> None:
         self.profiles_list.configure(state="normal")
