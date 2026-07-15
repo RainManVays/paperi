@@ -91,6 +91,24 @@ def _count_pages(document: DocumentItem) -> int:
         return len(pdf)
 
 
+def _shrink_tile_if_wider_than(tile: PIL.Image.Image, width_px: int) -> PIL.Image.Image:
+    """Only re-fits a tile down to width_px if it's actually wider —
+    unconditionally re-fitting every tile (an earlier, real bug: reported
+    live as "печатает увеличенную полноразмерную страницу... но не
+    вертикально, а горизонтально") stretched each rotated tile *back up*
+    to the full roll width, which defeats the entire point of imposition:
+    a real A5 tile is supposed to end up narrower than a "A4"-equivalent
+    canvas (~70% of the width, matching A5's real 148mm vs A4's 210mm) —
+    _pad_to_canvas_width below already pads that narrower content out with
+    blank margin, exactly like any other narrower-than-canvas content in
+    this pipeline. Only genuinely oversized tiles (source content taller
+    than it is wide by more than the tile_count, an unusual shape) need
+    shrinking here at all."""
+    if tile.width <= width_px:
+        return tile
+    return fit_to_width(tile, width_px, "fit_width")
+
+
 def _apply_page_format(
     raw_page: PIL.Image.Image, settings: PrintSettings, width_px: int
 ) -> list[PIL.Image.Image]:
@@ -107,15 +125,15 @@ def _apply_page_format(
     page = fit_to_width(page, width_px, "fit_width")
 
     if settings.page_format == PageFormat.HALF:
-        tiles = split_into_tiles(page, 2, rotate_each=True)
-        # rotate_each swaps each tile's width/height — the result is no
-        # longer guaranteed to be width_px wide (could now be *wider* than
-        # the printable area, which _pad_to_canvas_width below only ever
-        # widens, never shrinks). Re-fit every tile back to width_px.
-        return [fit_to_width(tile, width_px, "fit_width") for tile in tiles]
+        return [
+            _shrink_tile_if_wider_than(tile, width_px)
+            for tile in split_into_tiles(page, 2, rotate_each=True)
+        ]
     if settings.page_format == PageFormat.QUARTER:
-        tiles = split_into_tiles(page, 4, rotate_each=True)
-        return [fit_to_width(tile, width_px, "fit_width") for tile in tiles]
+        return [
+            _shrink_tile_if_wider_than(tile, width_px)
+            for tile in split_into_tiles(page, 4, rotate_each=True)
+        ]
     if settings.page_format == PageFormat.CUSTOM:
         tile_width_px = mm_to_px(settings.custom_tile_width_mm)
         page = fit_to_width(page, tile_width_px, "fit_width")

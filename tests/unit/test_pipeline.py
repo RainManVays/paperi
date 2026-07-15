@@ -153,33 +153,63 @@ def test_copies_default_is_a_single_page(tmp_path: Path) -> None:
     assert len(rendered.pages) == 1
 
 
-def test_page_format_half_produces_two_pages_fit_to_width(tmp_path: Path) -> None:
-    document = _image_document(tmp_path, width=100, height=300)
+def test_page_format_half_tiles_are_padded_not_stretched(tmp_path: Path) -> None:
+    """Real bug found via live hardware testing after this feature first
+    shipped: an earlier version unconditionally re-fit each rotated tile
+    back to width_px, stretching half of the page back up to look like an
+    enlarged, distorted near-full page ("печатает увеличенную
+    полноразмерную страницу... но не вертикально, а горизонтально")
+    instead of a correctly-scaled, narrower A5-equivalent piece padded
+    with blank space — exactly like any other narrower-than-canvas
+    content in this pipeline (_pad_to_canvas_width). The source here is
+    solid black specifically so a stretch bug is unmistakable: a uniform
+    color stretched to any width is still 100% that color, so genuine
+    white padding pixels only appear if the tile was correctly left
+    narrower, not stretched."""
+    document = _image_document(tmp_path, width=200, height=280)
     document.settings = PrintSettings(
         page_format=PageFormat.HALF, margin_top_px=0, margin_bottom_px=0, dithering=False
     )
 
-    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=5000)
+    rendered = DocumentPipeline().render_document(document, width_px=200, chunk_height_px=5000)
 
     assert len(rendered.pages) == 2
-    # rotate_each=True swaps each tile's width/height — re-fit back to
-    # width_px must always bring it back to exactly the printable width,
-    # regardless of how tall/narrow the rotated tile came out.
     for page in rendered.pages:
-        assert page.image.width == 100
+        image = page.image
+        assert image.getpixel((5, 5)) == 0  # content (black) preserved
+        assert image.getpixel((image.width - 5, 5)) != 0  # padded blank, not stretched
 
 
-def test_page_format_quarter_produces_four_pages(tmp_path: Path) -> None:
-    document = _image_document(tmp_path, width=100, height=300)
+def test_page_format_quarter_tiles_are_padded_not_stretched(tmp_path: Path) -> None:
+    document = _image_document(tmp_path, width=200, height=280)
     document.settings = PrintSettings(
         page_format=PageFormat.QUARTER, margin_top_px=0, margin_bottom_px=0, dithering=False
     )
 
-    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=5000)
+    rendered = DocumentPipeline().render_document(document, width_px=200, chunk_height_px=5000)
 
     assert len(rendered.pages) == 4
     for page in rendered.pages:
-        assert page.image.width == 100
+        image = page.image
+        assert image.getpixel((5, 5)) == 0
+        assert image.getpixel((image.width - 5, 5)) != 0
+
+
+def test_page_format_half_tile_wider_than_canvas_is_shrunk(tmp_path: Path) -> None:
+    """Edge case the padding-not-stretching fix above must NOT break: a
+    source shaped so unusually tall/narrow that even a rotated half-tile
+    would come out *wider* than the canvas needs an actual shrink (just
+    not the unconditional one that caused the bug for the normal case)."""
+    document = _image_document(tmp_path, width=50, height=1000)
+    document.settings = PrintSettings(
+        page_format=PageFormat.HALF, margin_top_px=0, margin_bottom_px=0, dithering=False
+    )
+
+    rendered = DocumentPipeline().render_document(document, width_px=50, chunk_height_px=5000)
+
+    assert len(rendered.pages) == 2
+    for page in rendered.pages:
+        assert page.image.width == 50
 
 
 def test_rotation_alone_rotates_the_whole_page_without_splitting(tmp_path: Path) -> None:
