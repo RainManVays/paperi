@@ -3,7 +3,7 @@ from collections.abc import Callable
 import customtkinter as ctk
 import PIL.Image
 
-from periprint.models.enums import PaperType
+from periprint.models.enums import PageFormat, PaperType
 
 # Human-readable labels for the dropdown — PaperType's own names are
 # code-style identifiers, not something to show a user directly.
@@ -14,6 +14,20 @@ _PAPER_TYPE_LABELS = {
     PaperType.PERFORATED: "Перфорированная",
 }
 _PAPER_TYPE_BY_LABEL = {label: paper_type for paper_type, label in _PAPER_TYPE_LABELS.items()}
+
+# docs/stage5-ux-plan.md M5.5 — imposition (see PageFormat's own docstring
+# for why the enum values aren't literally named A5/A6). UI copy uses the
+# user's own vocabulary even though the internal names are generic.
+_PAGE_FORMAT_LABELS = {
+    PageFormat.NATIVE: "Обычный (без разбиения)",
+    PageFormat.HALF: "А5 (2 части, повёрнуто)",
+    PageFormat.QUARTER: "А6 (4 части, повёрнуто)",
+    PageFormat.CUSTOM: "Свой размер",
+}
+_PAGE_FORMAT_BY_LABEL = {label: fmt for fmt, label in _PAGE_FORMAT_LABELS.items()}
+
+_ROTATION_LABELS = {0: "0°", 90: "90°", 180: "180°", 270: "270°"}
+_ROTATION_BY_LABEL = {label: degrees for degrees, label in _ROTATION_LABELS.items()}
 
 
 class PreviewPanel(ctk.CTkFrame):
@@ -106,7 +120,47 @@ class PreviewPanel(ctk.CTkFrame):
             command=self._handle_settings_changed,
         ).pack(side="left", padx=(8, 0))
 
-        page_range_row = ctk.CTkFrame(self, fg_color="transparent")
+        page_format_row = ctk.CTkFrame(self, fg_color="transparent")
+        page_format_row.pack(fill="x", padx=8, pady=(0, 8))
+        ctk.CTkLabel(page_format_row, text="Формат:").pack(side="left")
+        self.page_format_var = ctk.StringVar(value=_PAGE_FORMAT_LABELS[PageFormat.NATIVE])
+        ctk.CTkOptionMenu(
+            page_format_row,
+            variable=self.page_format_var,
+            values=list(_PAGE_FORMAT_LABELS.values()),
+            command=self._handle_page_format_changed,
+        ).pack(side="left", padx=(8, 0))
+
+        ctk.CTkLabel(page_format_row, text="Поворот:").pack(side="left", padx=(16, 0))
+        self.rotation_var = ctk.StringVar(value=_ROTATION_LABELS[0])
+        ctk.CTkOptionMenu(
+            page_format_row,
+            variable=self.rotation_var,
+            values=list(_ROTATION_LABELS.values()),
+            width=70,
+            command=lambda _choice: self._handle_settings_changed(),
+        ).pack(side="left", padx=(8, 0))
+
+        # Only shown for page_format=CUSTOM (see _handle_page_format_changed)
+        # — packed here so it takes its place in the vertical stack right
+        # away, but immediately pack_forget()'d since NATIVE is the default.
+        self.custom_size_row = ctk.CTkFrame(self, fg_color="transparent")
+        ctk.CTkLabel(self.custom_size_row, text="Размер куска, мм:").pack(side="left")
+        self.custom_width_entry = ctk.CTkEntry(self.custom_size_row, width=60)
+        self.custom_width_entry.insert(0, "100")
+        self.custom_width_entry.pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(self.custom_size_row, text="×").pack(side="left", padx=(4, 4))
+        self.custom_height_entry = ctk.CTkEntry(self.custom_size_row, width=60)
+        self.custom_height_entry.insert(0, "150")
+        self.custom_height_entry.pack(side="left")
+        for entry in (self.custom_width_entry, self.custom_height_entry):
+            entry.bind("<FocusOut>", lambda _e: self._handle_settings_changed())
+            entry.bind("<Return>", lambda _e: self._handle_settings_changed())
+        self.custom_size_row.pack(fill="x", padx=8, pady=(0, 8))
+        self.custom_size_row.pack_forget()
+
+        self.page_range_row = ctk.CTkFrame(self, fg_color="transparent")
+        page_range_row = self.page_range_row
         page_range_row.pack(fill="x", padx=8, pady=(0, 8))
         ctk.CTkLabel(page_range_row, text="Страницы:").pack(side="left")
         self.page_range_entry = ctk.CTkEntry(page_range_row, placeholder_text="все, напр. 2-4,7")
@@ -140,6 +194,39 @@ class PreviewPanel(ctk.CTkFrame):
         except ValueError:
             return 1
         return max(1, value)
+
+    def get_page_format(self) -> PageFormat:
+        return _PAGE_FORMAT_BY_LABEL[self.page_format_var.get()]
+
+    def get_rotation_degrees(self) -> int:
+        return _ROTATION_BY_LABEL[self.rotation_var.get()]
+
+    def get_custom_tile_width_mm(self) -> float:
+        try:
+            value = float(self.custom_width_entry.get().strip())
+        except ValueError:
+            return 100.0
+        return value if value > 0 else 100.0
+
+    def get_custom_tile_height_mm(self) -> float:
+        try:
+            value = float(self.custom_height_entry.get().strip())
+        except ValueError:
+            return 150.0
+        return value if value > 0 else 150.0
+
+    def _handle_page_format_changed(self, _choice: str) -> None:
+        # The width/height-in-mm entries are only meaningful for CUSTOM —
+        # shown/hidden rather than always visible-but-ignored, same spirit
+        # as dropzone.py's hover feedback: a control that's inert but still
+        # on screen invites confusion about whether it's doing anything.
+        if self.get_page_format() == PageFormat.CUSTOM:
+            self.custom_size_row.pack(
+                fill="x", padx=8, pady=(0, 8), before=self.page_range_row
+            )
+        else:
+            self.custom_size_row.pack_forget()
+        self._handle_settings_changed()
 
     def _handle_settings_changed(self) -> None:
         if self._on_settings_changed:

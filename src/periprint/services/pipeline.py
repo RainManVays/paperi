@@ -6,15 +6,19 @@ import PIL.Image
 
 from periprint.infra.renderers.base import (
     Renderer,
+    fit_to_width,
     normalize_to_1bit,
+    rotate_page,
     slice_into_chunks,
+    split_into_tiles,
     trim_to_content_height,
 )
 from periprint.infra.renderers.image_renderer import ImageRenderer
 from periprint.infra.renderers.pdf_renderer import PdfRenderer
 from periprint.infra.renderers.text_renderer import TextRenderer
 from periprint.models.document import DocumentItem, PrintSettings
-from periprint.models.enums import DocumentKind
+from periprint.models.enums import DocumentKind, PageFormat
+from periprint.models.printer_specs import mm_to_px
 from periprint.utils.page_range import parse_page_range
 
 _RENDERERS: dict[DocumentKind, Renderer] = {
@@ -87,6 +91,40 @@ def _count_pages(document: DocumentItem) -> int:
         return len(pdf)
 
 
+def _apply_page_format(
+    raw_page: PIL.Image.Image, settings: PrintSettings, width_px: int
+) -> list[PIL.Image.Image]:
+    """docs/stage5-ux-plan.md M5.5: rotation is always applied first (works
+    standalone with page_format=NATIVE, e.g. "just rotate my landscape
+    photo"); imposition (HALF/QUARTER/CUSTOM) then splits the (possibly
+    rotated) page into N physically separate pieces, each going through
+    the caller's normal per-page processing (trim/margins/normalize/chunk)
+    independently — every piece needs its own bottom tear-off margin since
+    each is meant to be torn off on its own."""
+    page = rotate_page(raw_page, settings.rotation_degrees)
+    # Rotating 90/270 swaps width and height, so the page may no longer be
+    # exactly width_px wide — fit_to_width is a no-op if it already is.
+    page = fit_to_width(page, width_px, "fit_width")
+
+    if settings.page_format == PageFormat.HALF:
+        tiles = split_into_tiles(page, 2, rotate_each=True)
+        # rotate_each swaps each tile's width/height — the result is no
+        # longer guaranteed to be width_px wide (could now be *wider* than
+        # the printable area, which _pad_to_canvas_width below only ever
+        # widens, never shrinks). Re-fit every tile back to width_px.
+        return [fit_to_width(tile, width_px, "fit_width") for tile in tiles]
+    if settings.page_format == PageFormat.QUARTER:
+        tiles = split_into_tiles(page, 4, rotate_each=True)
+        return [fit_to_width(tile, width_px, "fit_width") for tile in tiles]
+    if settings.page_format == PageFormat.CUSTOM:
+        tile_width_px = mm_to_px(settings.custom_tile_width_mm)
+        page = fit_to_width(page, tile_width_px, "fit_width")
+        tile_height_px = mm_to_px(settings.custom_tile_height_mm)
+        tile_count = max(1, -(-page.height // tile_height_px))  # ceil division
+        return split_into_tiles(page, tile_count, rotate_each=False)
+    return [page]  # NATIVE — rotation (if any) already applied above
+
+
 def _pad_to_canvas_width(image: PIL.Image.Image, canvas_width_px: int) -> PIL.Image.Image:
     """Widens (never stretches) content to canvas_width_px by padding white
     on the right. Needed because printer.printImage() unconditionally
@@ -122,22 +160,24 @@ class DocumentPipeline:
 
         pages = []
         for raw_page in raw_pages:
-            # Convert to a single-channel mode *before* any white-fill
-            # padding: PIL.Image.new(mode, size, color=255) only broadcasts
-            # a bare int to every channel for single-channel modes. For
-            # "RGB" (the common case — real photos/PDF pages), color=255
-            # fills only the red channel, i.e. produces red, not white —
-            # which then converts to a *dark* gray, not blank space. Caught
-            # by a test that actually checked the padded pixel's value
-            # rather than just image dimensions.
-            grayscale = raw_page.convert("L")
-            if settings.page_mode == "content_length":
-                grayscale = trim_to_content_height(grayscale)
-            widened = _pad_to_canvas_width(grayscale, target_canvas_width)
-            padded = _apply_margins(widened, settings)
-            normalized = normalize_to_1bit(padded, settings.dithering)
-            chunks = slice_into_chunks(normalized, chunk_height_px)
-            pages.append(RenderedPage(image=normalized, chunks=chunks))
+            for tile in _apply_page_format(raw_page, settings, width_px):
+                # Convert to a single-channel mode *before* any white-fill
+                # padding: PIL.Image.new(mode, size, color=255) only
+                # broadcasts a bare int to every channel for single-channel
+                # modes. For "RGB" (the common case — real photos/PDF
+                # pages), color=255 fills only the red channel, i.e.
+                # produces red, not white — which then converts to a *dark*
+                # gray, not blank space. Caught by a test that actually
+                # checked the padded pixel's value rather than just image
+                # dimensions.
+                grayscale = tile.convert("L")
+                if settings.page_mode == "content_length":
+                    grayscale = trim_to_content_height(grayscale)
+                widened = _pad_to_canvas_width(grayscale, target_canvas_width)
+                padded = _apply_margins(widened, settings)
+                normalized = normalize_to_1bit(padded, settings.dithering)
+                chunks = slice_into_chunks(normalized, chunk_height_px)
+                pages.append(RenderedPage(image=normalized, chunks=chunks))
 
         # N copies (docs/stage5-ux-plan.md M5.2): literally repeating
         # already-processed RenderedPage entries — PrintJobManager already

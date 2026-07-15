@@ -1,7 +1,13 @@
 import PIL.Image
 import PIL.ImageDraw
 
-from periprint.infra.renderers.base import fit_to_width, normalize_to_1bit, trim_to_content_height
+from periprint.infra.renderers.base import (
+    fit_to_width,
+    normalize_to_1bit,
+    rotate_page,
+    split_into_tiles,
+    trim_to_content_height,
+)
 
 
 def _image(width: int, height: int = 50, color: int = 128) -> PIL.Image.Image:
@@ -100,3 +106,66 @@ def test_trim_to_content_height_blank_page_is_untouched() -> None:
 
     assert result.height == 500
     assert result.width == 100
+
+
+def test_rotate_page_zero_degrees_is_a_no_op() -> None:
+    source = _image(width=100, height=50)
+
+    result = rotate_page(source, 0)
+
+    assert result is source
+
+
+def test_rotate_page_90_and_270_swap_dimensions() -> None:
+    source = _image(width=100, height=50)
+
+    assert rotate_page(source, 90).size == (50, 100)
+    assert rotate_page(source, 270).size == (50, 100)
+
+
+def test_rotate_page_180_keeps_dimensions_but_flips_content() -> None:
+    image = PIL.Image.new("L", (10, 20), color=255)
+    image.putpixel((0, 0), 0)  # mark the top-left corner
+
+    result = rotate_page(image, 180)
+
+    assert result.size == (10, 20)
+    assert result.getpixel((0, 0)) != 0  # was white
+    assert result.getpixel((9, 19)) == 0  # marker moved to the opposite corner
+
+
+def test_split_into_tiles_single_tile_is_a_no_op() -> None:
+    source = _image(width=100, height=50)
+
+    assert split_into_tiles(source, 1, rotate_each=False) == [source]
+
+
+def test_split_into_tiles_splits_into_equal_height_bands() -> None:
+    source = _image(width=100, height=200)
+
+    tiles = split_into_tiles(source, 4, rotate_each=False)
+
+    assert len(tiles) == 4
+    assert all(tile.width == 100 for tile in tiles)
+    assert sum(tile.height for tile in tiles) == 200
+
+
+def test_split_into_tiles_handles_uneven_division() -> None:
+    source = _image(width=100, height=100)
+
+    tiles = split_into_tiles(source, 3, rotate_each=False)
+
+    assert len(tiles) == 3
+    assert sum(tile.height for tile in tiles) == 100
+    # ceil(100/3) = 34 -> bands of 34, 34, 32
+    assert [tile.height for tile in tiles] == [34, 34, 32]
+
+
+def test_split_into_tiles_rotate_each_swaps_tile_dimensions() -> None:
+    source = _image(width=100, height=200)
+
+    tiles = split_into_tiles(source, 4, rotate_each=True)
+
+    # Each un-rotated band would be 100x50 (non-square, so the swap is
+    # actually observable) — rotated, width/height swap to 50x100.
+    assert all(tile.size == (50, 100) for tile in tiles)

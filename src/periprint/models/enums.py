@@ -27,6 +27,22 @@ class DocumentKind(StrEnum):
     PDF = "pdf"
 
 
+class PageFormat(StrEnum):
+    """Imposition — splitting an already-rendered page (full roll width,
+    de-facto "A4"-equivalent, see printer_specs.safe_content_width_px) into
+    N physically separate, individually-rotated pieces, printed back to
+    back with the existing between-page printBreak() as the cut line
+    (docs/stage5-ux-plan.md M5.5). Deliberately NOT named A5/A6 — those
+    names are already PrinterModel's (a different axis: fixed roll width
+    per hardware model, not user-selectable per job); UI labels still say
+    "А5"/"А6" since that's the user's own vocabulary."""
+
+    NATIVE = "native"  # today's behavior — no imposition
+    HALF = "half"  # 2 pieces ("А5" in the UI)
+    QUARTER = "quarter"  # 4 pieces ("А6" in the UI)
+    CUSTOM = "custom"  # explicit tile size in mm
+
+
 class JobStatus(StrEnum):
     QUEUED = "queued"
     RENDERING = "rendering"

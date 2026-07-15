@@ -5,7 +5,7 @@ import PIL.Image
 import pytest
 
 from periprint.models.document import DocumentItem, PrintSettings
-from periprint.models.enums import DocumentKind
+from periprint.models.enums import DocumentKind, PageFormat
 from periprint.services.pipeline import (
     DocumentPipeline,
     UnsupportedDocumentKindError,
@@ -151,6 +151,67 @@ def test_copies_default_is_a_single_page(tmp_path: Path) -> None:
     rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=200)
 
     assert len(rendered.pages) == 1
+
+
+def test_page_format_half_produces_two_pages_fit_to_width(tmp_path: Path) -> None:
+    document = _image_document(tmp_path, width=100, height=300)
+    document.settings = PrintSettings(
+        page_format=PageFormat.HALF, margin_top_px=0, margin_bottom_px=0, dithering=False
+    )
+
+    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=5000)
+
+    assert len(rendered.pages) == 2
+    # rotate_each=True swaps each tile's width/height — re-fit back to
+    # width_px must always bring it back to exactly the printable width,
+    # regardless of how tall/narrow the rotated tile came out.
+    for page in rendered.pages:
+        assert page.image.width == 100
+
+
+def test_page_format_quarter_produces_four_pages(tmp_path: Path) -> None:
+    document = _image_document(tmp_path, width=100, height=300)
+    document.settings = PrintSettings(
+        page_format=PageFormat.QUARTER, margin_top_px=0, margin_bottom_px=0, dithering=False
+    )
+
+    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=5000)
+
+    assert len(rendered.pages) == 4
+    for page in rendered.pages:
+        assert page.image.width == 100
+
+
+def test_rotation_alone_rotates_the_whole_page_without_splitting(tmp_path: Path) -> None:
+    document = _image_document(tmp_path, width=100, height=50)
+    document.settings = PrintSettings(
+        rotation_degrees=90, margin_top_px=0, margin_bottom_px=0, dithering=False
+    )
+
+    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=5000)
+
+    assert len(rendered.pages) == 1
+    # 100x50 rotated 90 -> 50x100, re-fit to width_px=100 doubles both axes.
+    assert rendered.pages[0].image.width == 100
+    assert rendered.pages[0].image.height == 200
+
+
+def test_page_format_custom_splits_by_explicit_mm_tile_size(tmp_path: Path) -> None:
+    document = _image_document(tmp_path, width=100, height=1000)
+    document.settings = PrintSettings(
+        page_format=PageFormat.CUSTOM,
+        custom_tile_width_mm=25.4,  # -> 203px at PRINT_DPI=203
+        custom_tile_height_mm=25.4,
+        margin_top_px=0,
+        margin_bottom_px=0,
+        dithering=False,
+    )
+
+    rendered = DocumentPipeline().render_document(document, width_px=100, chunk_height_px=5000)
+
+    # width 100px re-fit to custom width 203px -> height scales
+    # proportionally to 2030px -> split into ceil(2030/203) = 10 tiles.
+    assert len(rendered.pages) == 10
 
 
 def test_unsupported_kind_raises(tmp_path: Path) -> None:

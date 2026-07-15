@@ -449,6 +449,10 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
                     page_mode=self.preview_panel.page_mode_var.get(),
                     page_range=self.preview_panel.get_page_range(),
                     copies=self.preview_panel.get_copies(),
+                    rotation_degrees=self.preview_panel.get_rotation_degrees(),
+                    page_format=self.preview_panel.get_page_format(),
+                    custom_tile_width_mm=self.preview_panel.get_custom_tile_width_mm(),
+                    custom_tile_height_mm=self.preview_panel.get_custom_tile_height_mm(),
                 ),
             )
             self._current_document = document
@@ -521,6 +525,16 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         self._current_document.settings.page_mode = self.preview_panel.page_mode_var.get()
         self._current_document.settings.page_range = self.preview_panel.get_page_range()
         self._current_document.settings.copies = self.preview_panel.get_copies()
+        self._current_document.settings.rotation_degrees = (
+            self.preview_panel.get_rotation_degrees()
+        )
+        self._current_document.settings.page_format = self.preview_panel.get_page_format()
+        self._current_document.settings.custom_tile_width_mm = (
+            self.preview_panel.get_custom_tile_width_mm()
+        )
+        self._current_document.settings.custom_tile_height_mm = (
+            self.preview_panel.get_custom_tile_height_mm()
+        )
         self._render_and_show_preview()
 
     def _render_and_show_preview(self) -> None:

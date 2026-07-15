@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from periprint.models.enums import DocumentKind, PaperType
+from periprint.models.enums import DocumentKind, PageFormat, PaperType
 
 
 @dataclass
@@ -38,6 +38,20 @@ class PrintSettings:
     # PrintJobManager._process_job() already inserts a break between
     # copies for free, with no separate protocol/architecture needed.
     copies: int = 1
+    # docs/stage5-ux-plan.md M5.5: explicit whole-page rotation, independent
+    # of page_format's own per-tile rotation below. Only ever set from a
+    # UI dropdown (0/90/180/270) — no free-text entry, so no parsing/
+    # validation is needed here.
+    rotation_degrees: int = 0
+    # Imposition: split the already-rendered (full roll width) page into N
+    # physically separate pieces printed back to back — see
+    # PageFormat/services/pipeline.py::_apply_page_format().
+    page_format: PageFormat = PageFormat.NATIVE
+    # Only meaningful when page_format is CUSTOM. Defaults are arbitrary
+    # but sane starting values, same spirit as copies_entry's prefilled
+    # "1" — not a claim about what any given user wants.
+    custom_tile_width_mm: float = 100.0
+    custom_tile_height_mm: float = 150.0
 
 
 @dataclass

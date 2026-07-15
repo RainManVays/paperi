@@ -41,3 +41,15 @@ SAFE_CONTENT_WIDTH_PX: dict[PrinterModel, int] = {
 
 def safe_content_width_px(model: PrinterModel) -> int:
     return SAFE_CONTENT_WIDTH_PX.get(model, NATIVE_WIDTH_PX[model])
+
+
+# Same physical dot pitch as infra/renderers/pdf_renderer.py's own
+# _RENDER_DPI (periprint-spec.md: "Peripage A40 (ALD-Y200, 203dpi)") — kept
+# as a separate constant here rather than importing that renderer-local
+# one, to avoid touching an already hardware-verified file for this
+# unrelated mm-based sizing feature (docs/stage5-ux-plan.md M5.5).
+PRINT_DPI = 203
+
+
+def mm_to_px(mm: float) -> int:
+    return max(1, round(mm * PRINT_DPI / 25.4))

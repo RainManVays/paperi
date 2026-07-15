@@ -78,6 +78,50 @@ def normalize_to_1bit(image: PIL.Image.Image, dithering: bool) -> PIL.Image.Imag
     return grayscale.convert("1", dither=PIL.Image.Dither.NONE)
 
 
+def rotate_page(image: PIL.Image.Image, degrees: int) -> PIL.Image.Image:
+    """0/90/180/270 only — always comes from a fixed UI dropdown (see
+    PrintSettings.rotation_degrees), never free-form input, so no other
+    angle can reach here. Uses .transpose() (exact pixel remap), not
+    .rotate() (anti-aliases edges — irrelevant for content that's about to
+    be dithered/thresholded in normalize_to_1bit anyway, but transpose is
+    also just cheaper for exact 90-degree steps)."""
+    if degrees == 0:
+        return image
+    transpose_by_degrees = {
+        90: PIL.Image.Transpose.ROTATE_90,
+        180: PIL.Image.Transpose.ROTATE_180,
+        270: PIL.Image.Transpose.ROTATE_270,
+    }
+    return image.transpose(transpose_by_degrees[degrees])
+
+
+def split_into_tiles(
+    image: PIL.Image.Image, tile_count: int, *, rotate_each: bool
+) -> list[PIL.Image.Image]:
+    """Equal-height horizontal bands, top to bottom — docs/stage5-ux-plan.md
+    M5.5 imposition (e.g. one "A4"-equivalent page split into 2/4 pieces).
+    Band order matches the physical cut order a continuous roll naturally
+    supports (PrintJobManager already inserts a printBreak() between
+    consecutive RenderedPage entries — a visible gap to cut at).
+
+    rotate_each additionally rotates each band 90° — so that once a piece
+    is physically cut off and picked up rotated upright by the user, its
+    content reads the right way. NOT VERIFIED AGAINST REAL HARDWARE: which
+    way (CW vs CCW) is a judgment call made without a physical print+cut+
+    read-in-hand test. If it comes out backwards, flip ROTATE_90 to
+    ROTATE_270 right below — nothing else needs to change."""
+    if tile_count <= 1:
+        return [image]
+    tile_height = max(1, -(-image.height // tile_count))  # ceil division
+    tiles = [
+        image.crop((0, top, image.width, min(top + tile_height, image.height)))
+        for top in range(0, image.height, tile_height)
+    ]
+    if rotate_each:
+        tiles = [tile.transpose(PIL.Image.Transpose.ROTATE_90) for tile in tiles]
+    return tiles
+
+
 def slice_into_chunks(image: PIL.Image.Image, chunk_height_px: int) -> list[PIL.Image.Image]:
     """Vertical slices of exactly chunk_height_px (last one may be shorter)
     — the unit PrintJobManager sends/retries individually (Stage 4)."""
