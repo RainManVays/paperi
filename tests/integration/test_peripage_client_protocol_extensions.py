@@ -67,6 +67,37 @@ def test_set_concentration_raw_requires_connection() -> None:
         client.set_concentration_raw(3)
 
 
+# -- M5.0: set_print_heat_raw (untested "speed/heat" quality axis) --
+
+
+def test_set_print_heat_raw_sends_correct_opcode() -> None:
+    fake = FakeRawPrinter()
+    client = _connected_client(fake)
+
+    client.set_print_heat_raw(80)
+
+    assert fake.tell_printer_calls == [bytes.fromhex("10ff81") + bytes([80])]
+
+
+def test_set_print_heat_raw_clamps_to_manufacturer_ceiling() -> None:
+    fake = FakeRawPrinter()
+    client = _connected_client(fake)
+
+    client.set_print_heat_raw(255)
+
+    # 120, not 255: the decompiled app itself never sends above 120 for
+    # "new" chipsets like the A40 — see PeripageClient.MAX_PRINT_HEAT.
+    assert fake.tell_printer_calls == [bytes.fromhex("10ff81") + bytes([120])]
+
+
+def test_set_print_heat_raw_requires_connection() -> None:
+    client = PeripageClient(
+        mac="AA:BB", model=PrinterModel.A40, printer_factory=lambda mac, model: FakeRawPrinter()
+    )
+    with pytest.raises(RuntimeError):
+        client.set_print_heat_raw(80)
+
+
 # -- Phase 3: choose_paper_type --
 
 

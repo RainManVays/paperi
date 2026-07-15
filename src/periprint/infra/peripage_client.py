@@ -202,6 +202,36 @@ class PeripageClient:
         value = max(0, min(255, value))
         self._printer.tellPrinter(bytes.fromhex("10ff1000") + bytes([value]))
 
+    # -- docs/stage5-ux-plan.md §0.3: tested "quality" candidate, ruled out --
+
+    MAX_PRINT_HEAT = 120
+    """The decompiled app clamps this parameter to 80 or 120 depending on
+    chipset/model — 120 for "new" chipsets, which includes the A40 (see
+    docs/bluetooth-protocol-trace-analysis.md §2 step 11, §7.2). Enforced
+    here too, deliberately not opened up past what the manufacturer's own
+    app allows for this printer class: this is a thermal print head, and
+    unlike set_concentration_raw() (which only bypasses an overly narrow
+    library clamp within a range the app itself sends unclamped), there is
+    no evidence the firmware tolerates values above the app's own ceiling."""
+
+    def set_print_heat_raw(self, value: int) -> None:
+        """Opcode 10ff81 + 1 byte. Originally labeled "speed/heat" from the
+        clamp values alone; re-decompiling the app (2026-07-15) found the
+        only real call sites are paper-backoff-for-label-printing methods
+        (log tags "backoffPaperLinedots"/"纸头"), not anything
+        temperature-related — see
+        docs/bluetooth-protocol-trace-analysis.md §7.5. CONFIRMED on real
+        A40 hardware to produce no visible print difference across
+        20-120 (same conclusion as concentration, for what may be a
+        different reason: this parameter likely isn't about print
+        density at all for plain roll paper). Kept for reference/
+        completeness, not wired into any "quality preset" UI — see
+        docs/stage5-ux-plan.md §0.3."""
+        if self._printer is None:
+            raise RuntimeError("Not connected")
+        value = max(0, min(self.MAX_PRINT_HEAT, value))
+        self._printer.tellPrinter(bytes.fromhex("10ff81") + bytes([value]))
+
     # -- docs/printer-protocol-implementation-plan.md Phase 3 --
 
     def choose_paper_type(self, paper_type: PaperType) -> None:

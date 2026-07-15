@@ -242,3 +242,19 @@ Both covered by existing/updated unit and integration tests (`fake_raw_printer.p
 `printImage()`-call-counting scheme that stopped being exercised once job_manager stopped
 calling that method). No real-hardware re-test needed for either — behavior for existing
 profiles (`chunk_height_px` ≤ 255, no paper-type selection wired into the UI yet) is unchanged.
+
+### `set_print_heat_raw()` (`10ff81`, M5.0) — tested, no visible effect
+
+Real-hardware test 2026-07-15 (`scripts/hw_probe.py heat-test`, values 20/40/60/80/100/120,
+2 lines of EN+RU text per group instead of solid bars — text reveals stroke weight/bleed
+differences better than an already-binary solid square): **no visible difference in
+darkness/legibility/stroke weight between any of the 6 groups** on this A40 unit. Same result
+as `set_concentration_raw()` (Фаза 2). User's follow-up question ("the app definitely has 3
+quality tiers for images/text, are we testing the wrong thing?") led to re-decompiling the APK
+directly (see `docs/bluetooth-protocol-trace-analysis.md` §7.5 for the full writeup): confirmed
+via source that concentration and `10ff81` really are the only two parameters the official app
+uses for A40 image printing, and that image data is *always* sent as 1-bit (a real 5-bit
+grayscale packer, `H()`, exists in the code but is never actually called by any print path).
+Conclusion: we tested the right things; this printer/paper combination just doesn't respond
+to either knob. Any further "quality" work belongs in our own dithering algorithm, not the
+protocol — see `docs/stage5-ux-plan.md` §0.3.
