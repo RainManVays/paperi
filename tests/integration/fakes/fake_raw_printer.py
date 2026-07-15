@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+# Marks the start of a print_image_no_height_limit() send (see
+# infra/peripage_client.py) — one such header is sent per chunk, so counting
+# these in tellPrinter() gives an "images sent" count analogous to the old
+# library-path printImage_calls, without needing a dedicated fake method for
+# every raw-protocol call PeripageClient happens to compose from primitives.
+IMAGE_HEADER_MAGIC = bytes.fromhex("1d763000")
+
 
 class FakeRawPrinter:
     """Duck-types periprint.infra.raw_printer_protocol.RawPrinter without
@@ -17,7 +24,9 @@ class FakeRawPrinter:
         self.print_image_calls = 0
         self.print_break_calls = 0
         self.tell_printer_calls: list[bytes] = []
+        self.image_send_calls = 0
         self.fail_print_image_on_call: int | None = None
+        self.fail_image_send_on_call: int | None = None
         self._fail_connects = fail_connects
         self._row_bytes = row_bytes
 
@@ -55,4 +64,9 @@ class FakeRawPrinter:
         return self._row_bytes
 
     def tellPrinter(self, byteseq: bytes) -> None:
-        self.tell_printer_calls.append(bytes(byteseq))
+        byteseq = bytes(byteseq)
+        if byteseq.startswith(IMAGE_HEADER_MAGIC):
+            self.image_send_calls += 1
+            if self.fail_image_send_on_call == self.image_send_calls:
+                raise OSError("simulated mid-print connection drop")
+        self.tell_printer_calls.append(byteseq)

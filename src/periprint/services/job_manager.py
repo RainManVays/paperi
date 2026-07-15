@@ -230,7 +230,16 @@ class PrintJobManager:
                         continue
 
                     try:
-                        client.print_image(chunk, delay=_ROW_DELAY_SECONDS)
+                        # Not client.print_image(): that goes through
+                        # peripage.Printer.printImage(), which re-slices
+                        # anything >255 rows into multiple reset()+header
+                        # groups internally (see printer_specs.py TODO /
+                        # docs/printer-protocol-implementation-plan.md
+                        # Phase 4). print_image_no_height_limit() sends one
+                        # image = one reset(), verified on real hardware —
+                        # matters whenever chunk_height_px is configured
+                        # above 255, not just for very tall documents.
+                        client.print_image_no_height_limit(chunk, delay=_ROW_DELAY_SECONDS)
                     except Exception as exc:
                         job.status = JobStatus.PAUSED_ERROR
                         job.error_message = str(exc)

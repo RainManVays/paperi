@@ -218,3 +218,27 @@ code, not just trace guesses), implemented and tested against this same A40 seve
   narrow, per the decompiled app), but going past 2 isn't worth doing by default here — keep
   concentration=2 as the practical default, this bypass exists for units/firmware where it might
   matter more, not this one.
+
+### Stage 4 loose ends, found during the Stage 5 planning pass (2026-07-15)
+
+Two small gaps surfaced while reviewing the codebase for the Stage 5 rewrite — both are really
+Stage 4 correctness fixes, just noticed later:
+
+- `PrintJobManager._process_job()` was still calling `client.print_image()` (the *library's*
+  `printImage()`, which re-slices anything >255 rows into multiple internal `reset()`+header
+  groups) instead of the verified-on-real-hardware `client.print_image_no_height_limit()`. Fixed
+  — chunks now go out exactly the way the Phase 4 hardware test above actually validated. Not
+  yet re-verified on real hardware (no protocol-visible difference expected for
+  `chunk_height_px` ≤ 255, which is every profile's current default; only matters if
+  `chunk_height_px` is ever configured above 255).
+- `"paper_type_mismatch"` (opcode `0xFE`, decoded in `bluetooth-protocol-trace-analysis.md` §7.3)
+  was missing from `PAUSE_WORTHY_STATUSES` in `infra/printer_status_listener.py` — harmless
+  before Stage 5 (nothing ever called `choose_paper_type()`, so the printer had no expected
+  paper type to mismatch against and could never actually emit this status), but a real gap once
+  Stage 5 wires up real paper-type selection. Added.
+
+Both covered by existing/updated unit and integration tests (`fake_raw_printer.py` gained an
+`image_send_calls` counter keyed off the `1d763000` header magic, replacing the old
+`printImage()`-call-counting scheme that stopped being exercised once job_manager stopped
+calling that method). No real-hardware re-test needed for either — behavior for existing
+profiles (`chunk_height_px` ≤ 255, no paper-type selection wired into the UI yet) is unchanged.

@@ -3,7 +3,6 @@ import socket
 import time
 import uuid
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -52,12 +51,16 @@ def test_job_completes_successfully(tmp_path: Path) -> None:
     assert job.status == JobStatus.DONE
     assert job.total_chunks > 1
     assert job.completed_chunks == job.total_chunks
-    assert fake.print_image_calls == job.total_chunks
+    # print_image_no_height_limit() (not the library's printImage()) is what
+    # PrintJobManager actually sends chunks through — see
+    # infra/peripage_client.py; one IMAGE_HEADER_MAGIC tellPrinter() call per
+    # chunk sent.
+    assert fake.image_send_calls == job.total_chunks
 
 
 def test_mid_job_failure_pauses_without_losing_progress(tmp_path: Path) -> None:
     fake = FakeRawPrinter()
-    fake.fail_print_image_on_call = 3  # fail on the 3rd printImage() call
+    fake.fail_image_send_on_call = 3  # fail sending the 3rd chunk
     client = _connected_client(fake)
     event_queue: queue.Queue = queue.Queue()
     manager = PrintJobManager(DocumentPipeline(), event_queue, client_provider=lambda: client)
@@ -69,14 +72,14 @@ def test_mid_job_failure_pauses_without_losing_progress(tmp_path: Path) -> None:
 
     assert job.status == JobStatus.PAUSED_ERROR
     assert job.completed_chunks == 2  # chunks 1 and 2 succeeded before the 3rd failed
-    assert fake.print_image_calls == 3
+    assert fake.image_send_calls == 3
     total_chunks = job.total_chunks
 
     # Simulate the app's reconnect/retry path (mirrors what
     # PrintJobManager.retry_job does, minus spawning the worker thread —
     # avoiding that keeps this test deterministic instead of racing a
     # background thread against the assertions below).
-    fake.fail_print_image_on_call = None
+    fake.fail_image_send_on_call = None
     job.status = JobStatus.QUEUED
     job.error_message = None
     manager._process_job(job)
@@ -85,7 +88,7 @@ def test_mid_job_failure_pauses_without_losing_progress(tmp_path: Path) -> None:
     assert job.completed_chunks == total_chunks
     # Resume must not re-send the 2 chunks already completed before the
     # failure: 3 calls before (2 succeeded + 1 failed) + remaining chunks.
-    assert fake.print_image_calls == 3 + (total_chunks - 2)
+    assert fake.image_send_calls == 3 + (total_chunks - 2)
 
 
 def test_job_paused_when_printer_not_connected(tmp_path: Path) -> None:
@@ -113,9 +116,14 @@ def test_printer_abort_status_pauses_job_mid_print(tmp_path: Path) -> None:
             super().__init__()
             self._abort_after = abort_after
 
-        def printImage(self, img: Any, delay: float = 0.01) -> None:
-            super().printImage(img, delay=delay)
-            if self.print_image_calls == self._abort_after:
+        def tellPrinter(self, byteseq: bytes) -> None:
+            super().tellPrinter(byteseq)
+            # IMAGE_HEADER_MAGIC opens each chunk's
+            # print_image_no_height_limit() send (see fake_raw_printer.py) —
+            # fire right as chunk `abort_after` starts sending its rows.
+            if bytes(byteseq).startswith(b"\x1d\x76\x30\x00") and (
+                self.image_send_calls == self._abort_after
+            ):
                 remote_sock.sendall(bytes([0xFD, 0x01]))
                 # Real sleep (not the patched job_manager.time.sleep) so the
                 # listener thread's select() cycle has a chance to notice

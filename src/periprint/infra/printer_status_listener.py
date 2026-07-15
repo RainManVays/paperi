@@ -29,9 +29,20 @@ STATUS_MEANINGS: dict[tuple[int, int], str] = {
 # Statuses that mean "something is actually wrong, printing cannot safely
 # continue" — used by PrintJobManager to decide whether to pause a job.
 # cover_closed/resume_print are resolutions, not problems; deliberately
-# excluded.
+# excluded. paper_type_mismatch added when Stage 5 wired up real
+# choose_paper_type() selection — before that, this status could never
+# actually fire (nothing ever told the printer which paper type to expect),
+# so its absence here went unnoticed.
 PAUSE_WORTHY_STATUSES = frozenset(
-    {"out_of_paper", "cover_open", "overheat", "low_battery", "low_mileage", "abort_print"}
+    {
+        "out_of_paper",
+        "cover_open",
+        "overheat",
+        "low_battery",
+        "low_mileage",
+        "abort_print",
+        "paper_type_mismatch",
+    }
 )
 
 
