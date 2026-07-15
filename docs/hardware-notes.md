@@ -258,3 +258,42 @@ grayscale packer, `H()`, exists in the code but is never actually called by any 
 Conclusion: we tested the right things; this printer/paper combination just doesn't respond
 to either knob. Any further "quality" work belongs in our own dithering algorithm, not the
 protocol — see `docs/stage5-ux-plan.md` §0.3.
+
+### Trailing tear-off feed too short — found, fixed, verified on real hardware (2026-07-15)
+
+User-reported bug: real print jobs ended with the last content sitting right at the edge, no
+margin to tear the paper by hand. `PrintJobManager` already sent a trailing `print_break()`
+(`_PAGE_BREAK_SIZE`=60) at the end of every job — so the fix wasn't "add a break", it was
+figuring out why an existing break wasn't visibly doing anything.
+
+Calibrated `printBreak()`'s size byte against real physical feed distance
+(`scripts/hw_probe.py break-test`, values 20/60/100/150/200/255): near-perfectly linear,
+~0.126mm of feed per unit (20→3.9mm, 60→9mm, 100→13.95mm measured with a ruler) — matches the
+printer's 203dpi (~7.99 dots/mm) almost exactly, i.e. `size` really is dot-rows, not some other
+unit. size=60 measured ~9mm in isolation, comfortably inside the 5-10mm target — so the bug
+isn't a unit/calibration problem either.
+
+Reproduced the exact `PrintJobManager` sequence with the real `PeripageClient` +
+`PrinterStatusListener` classes (`scripts/hw_probe.py listener-break-test`) to check whether the
+background status-listener thread (running during every real job, unlike a bare
+`peripage.Printer` test) was somehow eating the break — it wasn't; gaps A/B/C (no listener /
+listener idle / listener + image-then-break with zero delay, each bracketed by 10mm reference
+cubes) all came out looking consistent and healthy.
+
+**Actual root cause**, found by directly observing the physical printout: the printer holds a
+fixed length of already-printed paper between the print head and the tear slot. A ~9mm break
+creates a perfectly visible gap *between two pieces of content that keep printing afterward*
+(confirmed: page-to-page breaks mid-job work fine) — but at the very end of a job, when nothing
+prints afterward to keep pushing paper through, that same ~9mm isn't enough to push the *last*
+printed content past the internal head-to-slot distance and out of the housing. It stays stuck
+inside, fully printed but physically unreachable, which is exactly the "no tear margin" symptom
+reported. Confirmed live: sending ~90mm of extra feed after a "stuck" job pushed the content
+fully out.
+
+**Fix**: `job_manager.py` now uses a separate, much larger `_FINAL_TEAR_OFF_SIZE = 255`
+(printBreak's max single-byte value, ~33mm) only for the trailing tear-off at the very end of a
+job — `_PAGE_BREAK_SIZE` (60, ~9mm) stays as-is for breaks between pages/chunks, which were
+never actually broken. Verified on real hardware: image chunk + `print_break(255)` pushed the
+content fully out with a comfortable tear margin, no manual extra feed needed. Also stopped
+silently swallowing this call's exceptions (`except Exception: pass` → logged warning) — the
+original bug likely would have surfaced sooner if a failure here had ever been visible in logs.

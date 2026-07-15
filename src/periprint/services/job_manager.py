@@ -32,6 +32,18 @@ _MAX_PAUSE_SECONDS = 5.0
 # socket send buffer pointlessly, not for the printer's benefit.
 _ROW_DELAY_SECONDS = 0.001
 _PAGE_BREAK_SIZE = 60
+# printBreak()'s size byte maps to physical feed at roughly 0.126mm/unit
+# (measured on a real A40, 2026-07-15 — size=60 feeds ~9mm, size=100 feeds
+# ~14mm, linear fit). That's enough for a *visible gap* between two pieces
+# of content that keep printing afterward (confirmed: page breaks mid-job
+# work fine at 60). It is NOT enough at the very end of a job: the printer
+# holds some fixed length of already-printed paper between the head and
+# the tear slot, and nothing prints afterward to push it the rest of the
+# way out — confirmed live: a job ending with only _PAGE_BREAK_SIZE left
+# its last content stuck inside the printer, invisible/untearable, until
+# an extra ~90mm of feed was sent manually. 255 (printBreak's max, ~33mm)
+# is used only for this final tear-off, never between pages/chunks.
+_FINAL_TEAR_OFF_SIZE = 255
 
 
 def _black_ratio(image: PIL.Image.Image) -> float:
@@ -264,9 +276,14 @@ class PrintJobManager:
                         return
 
             try:
-                client.print_break(_PAGE_BREAK_SIZE)
-            except Exception:
-                pass  # trailing tear-off feed is best-effort, not correctness-critical
+                # Not _PAGE_BREAK_SIZE: this is the final tear-off, not a
+                # gap between two pieces of content — needs to be much
+                # larger to actually push the last printed content past
+                # the printer's internal head-to-tear-slot distance, see
+                # _FINAL_TEAR_OFF_SIZE above.
+                client.print_break(_FINAL_TEAR_OFF_SIZE)
+            except Exception as exc:
+                logger.warning("Trailing tear-off feed failed (best-effort): %s", exc)
 
             job.status = JobStatus.DONE
             self._emit(job)
