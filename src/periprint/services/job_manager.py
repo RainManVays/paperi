@@ -146,6 +146,8 @@ class PrintJobManager:
             job = self._jobs.get(job_id)
             if job is not None and job.status in (JobStatus.QUEUED, JobStatus.PAUSED_ERROR):
                 job.status = JobStatus.CANCELLED
+                if job_id in self._order:
+                    self._order.remove(job_id)
         if job is not None:
             self._emit(job)
 
@@ -239,6 +241,20 @@ class PrintJobManager:
     def _emit(self, job: PrintJob) -> None:
         self._event_queue.put((EventType.PRINT_PROGRESS, job))
 
+    def _remove_from_order(self, job_id: str) -> None:
+        """Called the instant a job reaches a terminal status (DONE/FAILED/
+        CANCELLED). Real print controllers (Windows Print Spooler, CUPS,
+        Android's print spooler) never mix finished jobs into the active
+        queue view — they move to a separate history immediately, which is
+        exactly what made "у меня кнопка печатать всё, но что всё? документ
+        который уже распечатался будет распечатан еще раз?" ambiguous here
+        (docs/stage5-ux-plan.md point 13). MainWindow records the same
+        event into HistoryStore right after this fires, so nothing is
+        lost, just relocated out of list_jobs()."""
+        with self._lock:
+            if job_id in self._order:
+                self._order.remove(job_id)
+
     def _process_job(self, job: PrintJob) -> None:
         client = self._client_provider()
         if client is None or not client.is_connected():
@@ -274,6 +290,7 @@ class PrintJobManager:
             if stop_requested.is_set():
                 job.status = JobStatus.CANCELLED
                 self._emit(job)
+                self._remove_from_order(job.id)
                 return True
             return False
 
@@ -295,6 +312,7 @@ class PrintJobManager:
                 job.status = JobStatus.FAILED
                 job.error_message = str(exc)
                 self._emit(job)
+                self._remove_from_order(job.id)
                 return
 
             job.total_chunks = sum(len(page.chunks) for page in rendered.pages)
@@ -383,6 +401,7 @@ class PrintJobManager:
 
             job.status = JobStatus.DONE
             self._emit(job)
+            self._remove_from_order(job.id)
         finally:
             client.stop_status_listening()
             with self._lock:

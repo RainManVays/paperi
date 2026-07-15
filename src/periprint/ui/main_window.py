@@ -29,6 +29,7 @@ from periprint.services.pipeline import (
 from periprint.services.printer_manager import PrinterManager
 from periprint.ui.empty_state_panel import EmptyStatePanel
 from periprint.ui.error_panel import ErrorPanel
+from periprint.ui.history_panel import HistoryPanel
 from periprint.ui.preview_panel import PreviewPanel
 from periprint.ui.printer_panel import PrinterPanel
 from periprint.ui.queue_panel import QueuePanel
@@ -111,6 +112,12 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         # into the same grid cells via _show_*()/grid_forget(), same as
         # the empty <-> expanded switch already was.
         self._current_view = "empty"
+        # "queue" | "history" — which sub-tab of the expanded state is
+        # shown (docs/stage5-ux-plan.md point 13, option C): a finished job
+        # never lingers in the queue tab (see PrintJobManager.
+        # _remove_from_order()) — it moves to the history tab instead, so
+        # "Печать всё" in the queue tab always means exactly what's listed.
+        self._active_tab = "queue"
         # job_id -> (perf-counter time, completed_chunks) observed the
         # first time each job was seen PRINTING this session — the basis
         # for the ETA estimate in the status bar. Not persisted/resumed
@@ -119,7 +126,9 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         # isn't representative of ongoing print speed.
         self._job_progress_start: dict[str, tuple[float, int]] = {}
 
-        self.grid_rowconfigure(1, weight=1)
+        # Row 1 is the tab bar (fixed height); row 2 holds whichever tab's
+        # content is currently gridded (body or history_panel).
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         # Two mutually-exclusive top bars: printer_panel (small, expanded
@@ -165,6 +174,29 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.preview_panel.grid(row=0, column=1, sticky="nsew", padx=(4, 8), pady=8)
 
+        # Tabs, not a mixed single list (docs/stage5-ux-plan.md point 13,
+        # option C): the queue tab (self.body, above) only ever shows jobs
+        # that still need printing — a finished job is removed from it the
+        # instant it completes (PrintJobManager._remove_from_order()) and
+        # shows up here instead, same separation Windows Print Spooler/
+        # CUPS/Android's print spooler all keep.
+        self.tab_bar = ctk.CTkFrame(self, fg_color="transparent")
+        self.queue_tab_button = ctk.CTkButton(
+            self.tab_bar, text="Очередь", width=110, command=self._show_queue_tab
+        )
+        self.queue_tab_button.pack(side="left")
+        self.history_tab_button = ctk.CTkButton(
+            self.tab_bar, text="История", width=110, command=self._show_history_tab
+        )
+        self.history_tab_button.pack(side="left", padx=(8, 0))
+        # Captured once, before either button's color is ever touched, so
+        # _update_tab_buttons() can toggle back to "however CTk's active
+        # theme actually styles a button" instead of a hardcoded guess.
+        self._tab_active_color = self.queue_tab_button.cget("fg_color")
+        self._tab_inactive_color = ("gray70", "gray30")
+
+        self.history_panel = HistoryPanel(self)
+
         self.status_bar = ctk.CTkLabel(self, text="Статус: готово", anchor="w")
 
         self.settings_panel = SettingsPanel(
@@ -190,7 +222,9 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
     def _hide_all_views(self) -> None:
         self.empty_state_panel.grid_forget()
         self.printer_panel.grid_forget()
+        self.tab_bar.grid_forget()
         self.body.grid_forget()
+        self.history_panel.grid_forget()
         self.status_bar.grid_forget()
         self.settings_panel.grid_forget()
         self.scan_panel.grid_forget()
@@ -198,15 +232,41 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _show_empty_state(self) -> None:
         self._hide_all_views()
-        self.empty_state_panel.grid(row=0, column=0, rowspan=3, sticky="nsew")
+        self.empty_state_panel.grid(row=0, column=0, rowspan=4, sticky="nsew")
         self._current_view = "empty"
 
     def _show_expanded_state(self) -> None:
         self._hide_all_views()
         self.printer_panel.grid(row=0, column=0, sticky="ew")
-        self.body.grid(row=1, column=0, sticky="nsew")
-        self.status_bar.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.tab_bar.grid(row=1, column=0, sticky="ew", padx=8, pady=(8, 0))
+        self.status_bar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         self._current_view = "expanded"
+        if self._active_tab == "history":
+            self._show_history_tab()
+        else:
+            self._show_queue_tab()
+
+    def _show_queue_tab(self) -> None:
+        self._active_tab = "queue"
+        self.history_panel.grid_forget()
+        self.body.grid(row=2, column=0, sticky="nsew")
+        self._update_tab_buttons()
+
+    def _show_history_tab(self) -> None:
+        self._active_tab = "history"
+        self.body.grid_forget()
+        self.history_panel.set_entries(self._history_store.list_recent())
+        self.history_panel.grid(row=2, column=0, sticky="nsew", padx=8, pady=8)
+        self._update_tab_buttons()
+
+    def _update_tab_buttons(self) -> None:
+        is_queue = self._active_tab == "queue"
+        self.queue_tab_button.configure(
+            fg_color=self._tab_active_color if is_queue else self._tab_inactive_color
+        )
+        self.history_tab_button.configure(
+            fg_color=self._tab_inactive_color if is_queue else self._tab_active_color
+        )
 
     def _show_previous_main_state(self) -> None:
         """Returns to whichever of empty/expanded actually matches the
@@ -220,7 +280,7 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
     def _open_settings(self) -> None:
         self.settings_panel.refresh()
         self._hide_all_views()
-        self.settings_panel.grid(row=0, column=0, rowspan=3, sticky="nsew")
+        self.settings_panel.grid(row=0, column=0, rowspan=4, sticky="nsew")
         self._current_view = "settings"
 
     def _close_settings(self) -> None:
@@ -229,7 +289,7 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
     def _handle_scan_requested(self) -> None:
         self._hide_all_views()
         self.scan_panel.start_scan()
-        self.scan_panel.grid(row=0, column=0, rowspan=3, sticky="nsew")
+        self.scan_panel.grid(row=0, column=0, rowspan=4, sticky="nsew")
         self._current_view = "scan"
 
     def _handle_scan_device_selected(self, device: DiscoveredDevice) -> None:
@@ -241,7 +301,7 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _return_to_settings(self) -> None:
         self._hide_all_views()
-        self.settings_panel.grid(row=0, column=0, rowspan=3, sticky="nsew")
+        self.settings_panel.grid(row=0, column=0, rowspan=4, sticky="nsew")
         self._current_view = "settings"
 
     def _handle_theme_changed(self, theme: str) -> None:
@@ -568,6 +628,12 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
                     error_message=job.error_message,
                 )
             )
+            # If the history tab happens to already be open when a job
+            # finishes, refresh it immediately rather than showing a
+            # newly-recorded entry only after the user switches away and
+            # back.
+            if self._active_tab == "history":
+                self.history_panel.set_entries(self._history_store.list_recent())
             self.status_bar.configure(
                 text=f"Статус: {job.status.value} — {job.document.source_path}"
             )
@@ -588,7 +654,7 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
                 on_cancel=lambda: self._handle_error_cancel(job.id),
             )
             self._hide_all_views()
-            self.error_panel.grid(row=0, column=0, rowspan=3, sticky="nsew")
+            self.error_panel.grid(row=0, column=0, rowspan=4, sticky="nsew")
             self._current_view = "error"
 
     def _handle_error_reconnect(self, job_id: str) -> None:

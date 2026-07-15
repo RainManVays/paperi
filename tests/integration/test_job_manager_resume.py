@@ -63,6 +63,26 @@ def test_job_completes_successfully(tmp_path: Path) -> None:
     # infra/peripage_client.py; one IMAGE_HEADER_MAGIC tellPrinter() call per
     # chunk sent.
     assert fake.image_send_calls == job.total_chunks
+    # docs/stage5-ux-plan.md point 13: a finished job never lingers in the
+    # visible queue — same separation real print controllers (Windows/CUPS/
+    # Android) keep between "still pending" and "already printed".
+    assert manager.list_jobs() == []
+
+
+def test_job_render_failure_removes_it_from_queue(tmp_path: Path) -> None:
+    fake = FakeRawPrinter()
+    client = _connected_client(fake)
+    event_queue: queue.Queue = queue.Queue()
+    manager = PrintJobManager(DocumentPipeline(), event_queue, client_provider=lambda: client)
+
+    document = _make_text_document(tmp_path)
+    document.source_path = str(tmp_path / "does-not-exist.txt")
+    job = PrintJob(id=str(uuid.uuid4()), document=document, printer_profile_id="p1")
+    manager.enqueue(job, width_px=384, chunk_height_px=30)
+    manager._process_job(job)
+
+    assert job.status == JobStatus.FAILED
+    assert manager.list_jobs() == []
 
 
 def test_mid_job_failure_pauses_without_losing_progress(tmp_path: Path) -> None:
@@ -96,6 +116,7 @@ def test_mid_job_failure_pauses_without_losing_progress(tmp_path: Path) -> None:
     # Resume must not re-send the 2 chunks already completed before the
     # failure: 3 calls before (2 succeeded + 1 failed) + remaining chunks.
     assert fake.image_send_calls == 3 + (total_chunks - 2)
+    assert manager.list_jobs() == []
 
 
 def test_job_paused_when_printer_not_connected(tmp_path: Path) -> None:

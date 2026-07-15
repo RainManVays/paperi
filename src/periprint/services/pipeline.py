@@ -33,6 +33,16 @@ _EXTENSION_TO_KIND: dict[str, DocumentKind] = {
     ".md": DocumentKind.MARKDOWN,
 }
 
+# Only extensions whose kind has an actual registered renderer — .md maps
+# to a real DocumentKind but MarkdownRenderer doesn't exist yet (Stage 6/
+# P1), so detect_document_kind() accepts it while rendering always fails
+# later. Used to tell the user what genuinely works right now (dropzone
+# caption, docs/stage5-ux-plan.md's post-launch UX fixes) rather than
+# silently including a format that's guaranteed to error out.
+SUPPORTED_EXTENSIONS: tuple[str, ...] = tuple(
+    sorted(ext for ext, kind in _EXTENSION_TO_KIND.items() if kind in _RENDERERS)
+)
+
 
 class UnsupportedDocumentKindError(Exception):
     pass

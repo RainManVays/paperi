@@ -105,6 +105,31 @@ def test_clear_queue_cancels_paused_error_jobs(manager: PrintJobManager) -> None
     assert manager.list_jobs() == []
 
 
+def test_cancel_job_removes_it_from_list_jobs(manager: PrintJobManager) -> None:
+    """docs/stage5-ux-plan.md point 13: a job that reaches a terminal
+    status (here CANCELLED, via the error panel's "Отмена" button) must
+    disappear from the visible queue immediately, same as Windows Print
+    Spooler/CUPS/Android never mixing finished jobs into the active queue
+    view."""
+    paused = _make_job(status=JobStatus.PAUSED_ERROR)
+    manager.enqueue(paused, width_px=100, chunk_height_px=100)
+
+    manager.cancel_job(paused.id)
+
+    assert paused.status == JobStatus.CANCELLED
+    assert manager.list_jobs() == []
+
+
+def test_cancel_job_on_actively_printing_job_is_a_no_op(manager: PrintJobManager) -> None:
+    printing = _make_job(status=JobStatus.PRINTING)
+    manager.enqueue(printing, width_px=100, chunk_height_px=100)
+
+    manager.cancel_job(printing.id)
+
+    assert printing.status == JobStatus.PRINTING
+    assert _ids(manager) == [printing.id]
+
+
 def test_clear_queue_still_leaves_actively_printing_jobs_alone(
     manager: PrintJobManager,
 ) -> None:

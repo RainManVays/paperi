@@ -1,7 +1,10 @@
 from collections.abc import Callable
 
 import customtkinter as ctk
-from tkinterdnd2 import DND_FILES
+
+from periprint.ui.dropzone import dropzone_caption, wire_dropzone_dnd
+
+_DROPZONE_FG_COLOR = ("gray85", "gray20")
 
 
 class EmptyStatePanel(ctk.CTkFrame):
@@ -61,8 +64,8 @@ class EmptyStatePanel(ctk.CTkFrame):
 
         self.dropzone = ctk.CTkLabel(
             self,
-            text="Перетащите файлы сюда\nили нажмите для выбора",
-            fg_color=("gray85", "gray20"),
+            text=dropzone_caption("Перетащите файлы сюда\nили нажмите для выбора"),
+            fg_color=_DROPZONE_FG_COLOR,
             corner_radius=12,
             font=ctk.CTkFont(size=15),
         )
@@ -70,11 +73,7 @@ class EmptyStatePanel(ctk.CTkFrame):
         if on_select_file is not None:
             self.dropzone.bind("<Button-1>", lambda _event: on_select_file())
         if on_files_dropped is not None:
-            self.dropzone.drop_target_register(DND_FILES)
-            self.dropzone.dnd_bind(
-                "<<Drop>>",
-                lambda event: on_files_dropped(list(self.dropzone.tk.splitlist(event.data))),
-            )
+            wire_dropzone_dnd(self.dropzone, on_files_dropped, _DROPZONE_FG_COLOR)
 
     def _handle_connect_toggle(self) -> None:
         if self._on_connect_toggle:

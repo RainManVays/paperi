@@ -5,8 +5,6 @@ import PIL.Image
 
 from periprint.models.enums import PaperType
 
-_MAX_PREVIEW_WIDTH_PX = 260
-
 # Human-readable labels for the dropdown — PaperType's own names are
 # code-style identifiers, not something to show a user directly.
 _PAPER_TYPE_LABELS = {
@@ -28,6 +26,7 @@ class PreviewPanel(ctk.CTkFrame):
         super().__init__(master, **kwargs)
         self._on_settings_changed = on_settings_changed
         self._preview_image_ref: ctk.CTkImage | None = None
+        self._current_pil_image: PIL.Image.Image | None = None
 
         title = ctk.CTkLabel(self, text="ПРЕВЬЮ", font=ctk.CTkFont(weight="bold"))
         title.pack(anchor="w", padx=8, pady=(8, 0))
@@ -39,6 +38,12 @@ class PreviewPanel(ctk.CTkFrame):
             height=220,
         )
         self.preview_area.pack(fill="both", expand=True, padx=8, pady=8)
+        # The old logic scaled to a fixed 260px width regardless of the
+        # panel's actual size — on a bigger window the preview stayed tiny
+        # ("превью должно максимально растягиваться... внутри блока
+        # превью"). Re-fitting on every <Configure> (widget resize) makes it
+        # track the real available area instead of a hardcoded constant.
+        self.preview_area.bind("<Configure>", lambda _event: self._refresh_preview_fit())
 
         settings_title = ctk.CTkLabel(
             self, text="Настройки печати:", font=ctk.CTkFont(weight="bold")
@@ -141,11 +146,29 @@ class PreviewPanel(ctk.CTkFrame):
             self._on_settings_changed()
 
     def show_preview(self, image: PIL.Image.Image) -> None:
-        if image.width > _MAX_PREVIEW_WIDTH_PX:
-            ratio = _MAX_PREVIEW_WIDTH_PX / image.width
-            display_size = (_MAX_PREVIEW_WIDTH_PX, max(1, round(image.height * ratio)))
-        else:
-            display_size = (image.width, image.height)
+        self._current_pil_image = image
+        self._refresh_preview_fit()
+
+    def _refresh_preview_fit(self) -> None:
+        """Recomputes the displayed image size to fill as much of
+        preview_area's *actual current* size as possible while preserving
+        aspect ratio (upscaling small images, not just downscaling large
+        ones) — called both from show_preview() and on every <Configure>
+        so resizing the window/panel keeps the preview maximized."""
+        image = self._current_pil_image
+        if image is None:
+            return
+
+        area_width = self.preview_area.winfo_width()
+        area_height = self.preview_area.winfo_height()
+        # Before the widget is first laid out by the geometry manager,
+        # winfo_width()/height() report a stale 1x1 placeholder — skip
+        # fitting until a real <Configure> event reports actual space.
+        if area_width <= 1 or area_height <= 1:
+            return
+
+        scale = min(area_width / image.width, area_height / image.height)
+        display_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
 
         # CTkImage resizes via plain PIL .resize() with no resample filter.
         # PIL can't properly interpolate mode "1" (1-bit) images, so
@@ -161,5 +184,25 @@ class PreviewPanel(ctk.CTkFrame):
         self.preview_area.configure(image=self._preview_image_ref, text="")
 
     def show_message(self, text: str) -> None:
+        # Workaround for a real customtkinter bug (traced through its
+        # source, not guessed): CTkLabel._update_image() only calls
+        # self._label.configure(image=...) when the new image is a
+        # CTkImage or otherwise not None — passing image=None takes
+        # neither branch, so the *raw* underlying tkinter.Label never
+        # actually has its own `image` option cleared, even though
+        # CTkLabel's own bookkeeping (self._image) correctly becomes
+        # None. Once Python garbage-collects the real PhotoImage that
+        # raw option was pointing to, the raw label is left holding a
+        # dangling image *name* reference — and Tk raises
+        # `_tkinter.TclError: image "pyimageN" doesn't exist` on the
+        # *next* .configure() call of any kind on that label, not just
+        # another image change. Reproduced directly: two show_message()
+        # calls in a row (e.g. an invalid page range triggering a render
+        # error twice in succession) crashed the whole app on the second
+        # call. Clearing the raw label's image option to "" (Tk's own
+        # convention for "no image", not Python None) side-steps
+        # customtkinter's broken path entirely.
+        self._current_pil_image = None
         self._preview_image_ref = None
-        self.preview_area.configure(image=None, text=text)
+        self.preview_area._label.configure(image="")
+        self.preview_area.configure(text=text)

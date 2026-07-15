@@ -28,11 +28,11 @@ def parse_page_range(range_str: str, total_pages: int) -> list[int]:
             continue
         match = _TOKEN_RE.match(token)
         if not match:
-            raise ValueError(f"Invalid page range token: {token!r}")
+            raise ValueError(f"Некорректный диапазон страниц: «{token}»")
         start = int(match.group(1))
         end = int(match.group(3)) if match.group(3) else start
         if start < 1 or end < start:
-            raise ValueError(f"Invalid page range token: {token!r}")
+            raise ValueError(f"Некорректный диапазон страниц: «{token}»")
         for page in range(start, end + 1):
             index = page - 1
             if index < total_pages and index not in seen:
