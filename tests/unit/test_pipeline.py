@@ -74,6 +74,31 @@ def test_render_document_canvas_width_defaults_to_width_px(tmp_path: Path) -> No
     assert rendered.pages[0].image.width == 100
 
 
+def test_page_mode_content_length_trims_blank_pdf_tail(tmp_path: Path) -> None:
+    """periprint-spec.md §3 P1: "по длине контента" should crop a mostly
+    blank PDF page down to its actual content height, unlike the default
+    full_page mode which keeps the entire rendered page."""
+    import fitz
+
+    pdf_path = tmp_path / "tall.pdf"
+    document_handle = fitz.open()
+    page = document_handle.new_page(width=200, height=1000)  # very tall, mostly blank
+    page.insert_text((20, 20), "short line near the top")
+    document_handle.save(str(pdf_path))
+    document_handle.close()
+
+    document = DocumentItem(id="x", source_path=str(pdf_path), kind=DocumentKind.PDF)
+    document.settings = PrintSettings(page_mode="full_page", margin_top_px=0, margin_bottom_px=0)
+    full_page = DocumentPipeline().render_document(document, width_px=200, chunk_height_px=5000)
+
+    document.settings = PrintSettings(
+        page_mode="content_length", margin_top_px=0, margin_bottom_px=0
+    )
+    trimmed = DocumentPipeline().render_document(document, width_px=200, chunk_height_px=5000)
+
+    assert trimmed.pages[0].image.height < full_page.pages[0].image.height / 4
+
+
 def test_unsupported_kind_raises(tmp_path: Path) -> None:
     source_path = tmp_path / "note.md"
     source_path.write_text("# heading", encoding="utf-8")

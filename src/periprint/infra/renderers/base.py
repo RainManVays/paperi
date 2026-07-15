@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 import PIL.Image
+import PIL.ImageChops
 
 
 class Renderer(Protocol):
@@ -35,6 +36,26 @@ def fit_to_width(image: PIL.Image.Image, width_px: int, fit_mode: str) -> PIL.Im
 
     left = (image.width - width_px) // 2
     return image.crop((left, 0, left + width_px, image.height))
+
+
+def trim_to_content_height(image: PIL.Image.Image) -> PIL.Image.Image:
+    """"По длине контента" page mode (periprint-spec.md §3 P1): crops
+    trailing/leading blank vertical space from a full-page raster, so a
+    page mostly empty (e.g. a short PDF page rendered at full A4 height)
+    doesn't waste paper on blank tape. Only trims height, never width —
+    the spec is explicit this is a vertical crop, not a horizontal one;
+    "целиком по формату" (full_page) keeps the untrimmed page instead.
+    A fully blank page is left untouched: there's nothing meaningful to
+    trim to, and collapsing it to 0 height would silently drop it from a
+    multi-page document instead of printing a visibly blank page."""
+    grayscale = image.convert("L")
+    # Background is white (255); invert so content (anything non-white)
+    # becomes the non-zero region getbbox() looks for.
+    bbox = PIL.ImageChops.invert(grayscale).getbbox()
+    if bbox is None:
+        return image
+    _left, top, _right, bottom = bbox
+    return image.crop((0, top, image.width, bottom))
 
 
 def normalize_to_1bit(image: PIL.Image.Image, dithering: bool) -> PIL.Image.Image:

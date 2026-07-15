@@ -81,7 +81,7 @@ class PreviewPanel(ctk.CTkFrame):
         self.dithering_checkbox.pack(anchor="w", padx=(8, 0), pady=(8, 0))
 
         paper_type_row = ctk.CTkFrame(self, fg_color="transparent")
-        paper_type_row.pack(fill="x", padx=8, pady=8)
+        paper_type_row.pack(fill="x", padx=8, pady=(8, 0))
         ctk.CTkLabel(paper_type_row, text="Тип бумаги:").pack(side="left")
         self.paper_type_var = ctk.StringVar(value=_PAPER_TYPE_LABELS[PaperType.CONTINUOUS_ROLL])
         ctk.CTkOptionMenu(
@@ -89,6 +89,24 @@ class PreviewPanel(ctk.CTkFrame):
             variable=self.paper_type_var,
             values=list(_PAPER_TYPE_LABELS.values()),
             command=lambda _choice: self._handle_settings_changed(),
+        ).pack(side="left", padx=(8, 0))
+
+        self.page_mode_var = ctk.StringVar(value="full_page")
+        page_mode_row = ctk.CTkFrame(self, fg_color="transparent")
+        page_mode_row.pack(fill="x", padx=8, pady=8)
+        ctk.CTkRadioButton(
+            page_mode_row,
+            text="целиком по формату",
+            variable=self.page_mode_var,
+            value="full_page",
+            command=self._handle_settings_changed,
+        ).pack(side="left")
+        ctk.CTkRadioButton(
+            page_mode_row,
+            text="по длине контента",
+            variable=self.page_mode_var,
+            value="content_length",
+            command=self._handle_settings_changed,
         ).pack(side="left", padx=(8, 0))
 
     def get_paper_type(self) -> PaperType:

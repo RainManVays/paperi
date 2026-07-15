@@ -3,7 +3,12 @@ from pathlib import Path
 
 import PIL.Image
 
-from periprint.infra.renderers.base import Renderer, normalize_to_1bit, slice_into_chunks
+from periprint.infra.renderers.base import (
+    Renderer,
+    normalize_to_1bit,
+    slice_into_chunks,
+    trim_to_content_height,
+)
 from periprint.infra.renderers.image_renderer import ImageRenderer
 from periprint.infra.renderers.pdf_renderer import PdfRenderer
 from periprint.infra.renderers.text_renderer import TextRenderer
@@ -100,6 +105,8 @@ class DocumentPipeline:
             # by a test that actually checked the padded pixel's value
             # rather than just image dimensions.
             grayscale = raw_page.convert("L")
+            if settings.page_mode == "content_length":
+                grayscale = trim_to_content_height(grayscale)
             widened = _pad_to_canvas_width(grayscale, target_canvas_width)
             padded = _apply_margins(widened, settings)
             normalized = normalize_to_1bit(padded, settings.dithering)

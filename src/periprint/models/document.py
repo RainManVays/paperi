@@ -19,6 +19,13 @@ class PrintSettings:
     # continuous roll since that's this project's actual paper stock;
     # only matters in practice for label-class printers.
     paper_type: PaperType = PaperType.CONTINUOUS_ROLL
+    # periprint-spec.md §3 P1: full_page prints the whole rendered page
+    # (e.g. a full A4 height, most of it likely blank) scaled to printer
+    # width; content_length trims trailing/leading blank vertical space
+    # first (DocumentPipeline / infra/renderers/base.py::
+    # trim_to_content_height) to save tape. Not the same axis as
+    # fit_mode, which only controls horizontal scaling.
+    page_mode: str = "full_page"  # full_page | content_length
 
 
 @dataclass

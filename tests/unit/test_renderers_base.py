@@ -1,6 +1,7 @@
 import PIL.Image
+import PIL.ImageDraw
 
-from periprint.infra.renderers.base import fit_to_width, normalize_to_1bit
+from periprint.infra.renderers.base import fit_to_width, normalize_to_1bit, trim_to_content_height
 
 
 def _image(width: int, height: int = 50, color: int = 128) -> PIL.Image.Image:
@@ -60,3 +61,42 @@ def test_normalize_to_1bit_without_dithering_uses_threshold() -> None:
     assert result.mode == "1"
     # Above mid-gray threshold with no dithering -> every pixel white (255/on).
     assert result.getpixel((0, 0)) != 0
+
+
+def test_trim_to_content_height_crops_blank_tail() -> None:
+    # A "page" with content only in a band near the top, like a short PDF
+    # page rendered at full A4 height (periprint-spec.md §3 P1 "по длине
+    # контента" mode).
+    image = PIL.Image.new("L", (100, 1000), color=255)
+    draw = PIL.ImageDraw.Draw(image)
+    draw.rectangle([10, 20, 90, 60], fill=0)
+
+    result = trim_to_content_height(image)
+
+    assert result.width == 100
+    # rectangle([10, 20, 90, 60]) draws rows 20-60 inclusive (41 rows);
+    # getbbox()'s lower bound is exclusive, so the crop is [20, 61).
+    assert result.height == 41
+    assert result.getpixel((50, 10)) == 0  # was row 30 in the original
+
+
+def test_trim_to_content_height_leaves_full_page_untouched() -> None:
+    image = PIL.Image.new("L", (100, 1000), color=255)
+    draw = PIL.ImageDraw.Draw(image)
+    draw.rectangle([10, 20, 90, 60], fill=0)
+
+    # full_page mode never calls trim_to_content_height at all — this just
+    # confirms fit_to_width alone (the other axis) doesn't accidentally
+    # crop height on its own.
+    result = fit_to_width(image, width_px=100, fit_mode="fit_width")
+
+    assert result.height == 1000
+
+
+def test_trim_to_content_height_blank_page_is_untouched() -> None:
+    blank = PIL.Image.new("L", (100, 500), color=255)
+
+    result = trim_to_content_height(blank)
+
+    assert result.height == 500
+    assert result.width == 100
