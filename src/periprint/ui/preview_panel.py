@@ -3,7 +3,19 @@ from collections.abc import Callable
 import customtkinter as ctk
 import PIL.Image
 
+from periprint.models.enums import PaperType
+
 _MAX_PREVIEW_WIDTH_PX = 260
+
+# Human-readable labels for the dropdown — PaperType's own names are
+# code-style identifiers, not something to show a user directly.
+_PAPER_TYPE_LABELS = {
+    PaperType.CONTINUOUS_ROLL: "Рулонная (обычная)",
+    PaperType.FOLDED_BLACK_MARK: "Складная с чёрной меткой",
+    PaperType.ADHESIVE_GAP: "Самоклеящаяся с зазором",
+    PaperType.PERFORATED: "Перфорированная",
+}
+_PAPER_TYPE_BY_LABEL = {label: paper_type for paper_type, label in _PAPER_TYPE_LABELS.items()}
 
 
 class PreviewPanel(ctk.CTkFrame):
@@ -66,7 +78,21 @@ class PreviewPanel(ctk.CTkFrame):
             variable=self.dithering_var,
             command=self._handle_settings_changed,
         )
-        self.dithering_checkbox.pack(anchor="w", padx=8, pady=8)
+        self.dithering_checkbox.pack(anchor="w", padx=(8, 0), pady=(8, 0))
+
+        paper_type_row = ctk.CTkFrame(self, fg_color="transparent")
+        paper_type_row.pack(fill="x", padx=8, pady=8)
+        ctk.CTkLabel(paper_type_row, text="Тип бумаги:").pack(side="left")
+        self.paper_type_var = ctk.StringVar(value=_PAPER_TYPE_LABELS[PaperType.CONTINUOUS_ROLL])
+        ctk.CTkOptionMenu(
+            paper_type_row,
+            variable=self.paper_type_var,
+            values=list(_PAPER_TYPE_LABELS.values()),
+            command=lambda _choice: self._handle_settings_changed(),
+        ).pack(side="left", padx=(8, 0))
+
+    def get_paper_type(self) -> PaperType:
+        return _PAPER_TYPE_BY_LABEL[self.paper_type_var.get()]
 
     def _handle_settings_changed(self) -> None:
         if self._on_settings_changed:

@@ -135,14 +135,17 @@
 
 ## 1. Скорректированные milestones
 
-### M5.0 — Настройки бумаги (пресеты качества закрыты, см. §0.3)
-- Подключить `PaperType` (уже реализован, см. `models/enums.py`) в `PrintSettings` и UI —
-  выпадающий список с человекочитаемыми названиями (folded black-mark / continuous roll /
-  adhesive gap / perforated), не сырые числа.
-- `PrintJobManager` вызывает `client.choose_paper_type(job.document.settings.paper_type)` в
-  начале **каждого** задания (см. §0.1) — не в `connect()`.
-- Обработка `paper_type_mismatch` уже на месте (см. §0.4) — задание встанет на паузу с
+### M5.0 — Настройки бумаги (пресеты качества закрыты, см. §0.3) — [x] реализовано 2026-07-15
+- [x] `PaperType` подключён в `PrintSettings` (поле `paper_type`, дефолт `CONTINUOUS_ROLL`) и в
+  UI (`PreviewPanel` — выпадающий список с человекочитаемыми названиями, не сырые числа).
+- [x] `PrintJobManager` вызывает `client.choose_paper_type(job.document.settings.paper_type)` в
+  начале **каждого** задания (см. §0.1) — не в `connect()`. Ошибка на этом шаге ставит задание
+  на паузу (`PAUSED_ERROR`), как и другие протокольные вызовы уровня задания.
+- [x] Обработка `paper_type_mismatch` уже на месте (см. §0.4) — задание встанет на паузу с
   понятным сообщением, если выбранный тип не совпадает с физически заряженной бумагой.
+- Покрыто тестами (`test_job_sends_choose_paper_type_once_with_job_setting`,
+  `test_job_paused_when_choose_paper_type_fails`) и вручную проверено в UI (customtkinter
+  `CTkOptionMenu`, все 4 варианта корректно маппятся на `PaperType`).
 - Пресеты качества (draft/normal/best поверх concentration/heat) **не входят в Stage 5** —
   оба протокольных параметра для A40 проверены на реальном железе 2026-07-15
   (`set_concentration_raw()` и `set_print_heat_raw()`, оба реализованы и покрыты тестами) и

@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from periprint.infra.peripage_client import PeripageClient
-from periprint.models.document import DocumentItem
-from periprint.models.enums import DocumentKind, JobStatus, PrinterModel
+from periprint.models.document import DocumentItem, PrintSettings
+from periprint.models.enums import DocumentKind, JobStatus, PaperType, PrinterModel
 from periprint.models.job import PrintJob
 from periprint.services import job_manager as job_manager_module
 from periprint.services.job_manager import PrintJobManager
@@ -21,10 +21,17 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(job_manager_module.time, "sleep", lambda seconds: None)
 
 
-def _make_text_document(tmp_path: Path, lines: int = 40) -> DocumentItem:
+def _make_text_document(
+    tmp_path: Path, lines: int = 40, settings: PrintSettings | None = None
+) -> DocumentItem:
     path = tmp_path / "note.txt"
     path.write_text("\n".join(f"line {i}" for i in range(lines)), encoding="utf-8")
-    return DocumentItem(id=str(uuid.uuid4()), source_path=str(path), kind=DocumentKind.TEXT)
+    return DocumentItem(
+        id=str(uuid.uuid4()),
+        source_path=str(path),
+        kind=DocumentKind.TEXT,
+        settings=settings or PrintSettings(),
+    )
 
 
 def _connected_client(fake: FakeRawPrinter) -> PeripageClient:
@@ -178,3 +185,46 @@ def test_multi_page_document_gets_page_break_between_pages(tmp_path: Path) -> No
     assert job.status == JobStatus.DONE
     # One printBreak between the 2 pages, plus one trailing tear-off break.
     assert fake.print_break_calls == 2
+
+
+def test_job_sends_choose_paper_type_once_with_job_setting(tmp_path: Path) -> None:
+    """docs/stage5-ux-plan.md §0.1: a live trace of the official app showed
+    choosePaperType sent before every print action, not once per
+    connection — PrintJobManager must call it once per job, using that
+    job's own PrintSettings.paper_type."""
+    fake = FakeRawPrinter()
+    client = _connected_client(fake)
+    event_queue: queue.Queue = queue.Queue()
+    manager = PrintJobManager(DocumentPipeline(), event_queue, client_provider=lambda: client)
+
+    document = _make_text_document(
+        tmp_path, settings=PrintSettings(paper_type=PaperType.ADHESIVE_GAP)
+    )
+    job = PrintJob(id=str(uuid.uuid4()), document=document, printer_profile_id="p1")
+    manager.enqueue(job, width_px=384, chunk_height_px=30)
+    manager._process_job(job)
+
+    assert job.status == JobStatus.DONE
+    paper_type_calls = [
+        call
+        for call in fake.tell_printer_calls
+        if call.startswith(bytes.fromhex("10ff1003"))
+    ]
+    assert paper_type_calls == [bytes.fromhex("10ff1003") + bytes([int(PaperType.ADHESIVE_GAP)])]
+
+
+def test_job_paused_when_choose_paper_type_fails(tmp_path: Path) -> None:
+    fake = FakeRawPrinter()
+    fake.fail_choose_paper_type = True
+    client = _connected_client(fake)
+    event_queue: queue.Queue = queue.Queue()
+    manager = PrintJobManager(DocumentPipeline(), event_queue, client_provider=lambda: client)
+
+    document = _make_text_document(tmp_path)
+    job = PrintJob(id=str(uuid.uuid4()), document=document, printer_profile_id="p1")
+    manager.enqueue(job, width_px=384, chunk_height_px=30)
+    manager._process_job(job)
+
+    assert job.status == JobStatus.PAUSED_ERROR
+    assert job.completed_chunks == 0
+    assert fake.image_send_calls == 0  # must not start sending chunks if setup failed

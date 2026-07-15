@@ -8,6 +8,9 @@ from typing import Any
 # library-path printImage_calls, without needing a dedicated fake method for
 # every raw-protocol call PeripageClient happens to compose from primitives.
 IMAGE_HEADER_MAGIC = bytes.fromhex("1d763000")
+# choose_paper_type()'s opcode (infra/peripage_client.py) — see
+# docs/bluetooth-protocol-trace-analysis.md §7.2.
+CHOOSE_PAPER_TYPE_MAGIC = bytes.fromhex("10ff1003")
 
 
 class FakeRawPrinter:
@@ -27,6 +30,7 @@ class FakeRawPrinter:
         self.image_send_calls = 0
         self.fail_print_image_on_call: int | None = None
         self.fail_image_send_on_call: int | None = None
+        self.fail_choose_paper_type: bool = False
         self._fail_connects = fail_connects
         self._row_bytes = row_bytes
 
@@ -69,4 +73,6 @@ class FakeRawPrinter:
             self.image_send_calls += 1
             if self.fail_image_send_on_call == self.image_send_calls:
                 raise OSError("simulated mid-print connection drop")
+        if byteseq.startswith(CHOOSE_PAPER_TYPE_MAGIC) and self.fail_choose_paper_type:
+            raise OSError("simulated choose_paper_type failure")
         self.tell_printer_calls.append(byteseq)

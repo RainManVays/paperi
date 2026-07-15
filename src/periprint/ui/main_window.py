@@ -222,6 +222,7 @@ class MainWindow(ctk.CTk):
             settings=PrintSettings(
                 fit_mode=self.preview_panel.fit_mode_var.get(),
                 dithering=self.preview_panel.dithering_var.get(),
+                paper_type=self.preview_panel.get_paper_type(),
             ),
         )
         self._current_document = document
@@ -249,6 +250,7 @@ class MainWindow(ctk.CTk):
             return
         self._current_document.settings.fit_mode = self.preview_panel.fit_mode_var.get()
         self._current_document.settings.dithering = self.preview_panel.dithering_var.get()
+        self._current_document.settings.paper_type = self.preview_panel.get_paper_type()
         self._render_and_show_preview()
 
     def _render_and_show_preview(self) -> None:

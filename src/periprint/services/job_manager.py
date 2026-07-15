@@ -233,6 +233,18 @@ class PrintJobManager:
             job.status = JobStatus.PRINTING
             self._emit(job)
 
+            # Called once per job, not once per connection: a live HCI trace
+            # of the official app showed this sent before *every* print
+            # action, byte-identical each time (docs/stage5-ux-plan.md
+            # §0.1) — not something to cache from a previous job/connect().
+            try:
+                client.choose_paper_type(job.document.settings.paper_type)
+            except Exception as exc:
+                job.status = JobStatus.PAUSED_ERROR
+                job.error_message = str(exc)
+                self._emit(job)
+                return
+
             chunk_index = 0
             dark_streak = 0
             for page_number, page in enumerate(rendered.pages):
