@@ -43,6 +43,13 @@ class PrintSettings:
     # UI dropdown (0/90/180/270) — no free-text entry, so no parsing/
     # validation is needed here.
     rotation_degrees: int = 0
+    # docs/imposition-spec.md §6.2/§Б.1: applied first in the transform
+    # pipeline (mirror -> auto-rotate -> rotation_degrees -> fit), before
+    # any rotation. Independent flags — both True is a 180° rotation in
+    # effect, but implemented as two flips, not optimized into a rotation,
+    # per the spec's "don't special-case a derivable identity" note.
+    mirror_horizontal: bool = False
+    mirror_vertical: bool = False
     # Imposition: split the already-rendered (full roll width) page into N
     # physically separate pieces printed back to back — see
     # PageFormat/services/pipeline.py::_apply_page_format().

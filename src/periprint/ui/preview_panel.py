@@ -4,6 +4,8 @@ import customtkinter as ctk
 import PIL.Image
 
 from periprint.models.enums import PageFormat, PaperType
+from periprint.services.pipeline import RenderedPage
+from periprint.ui.preview_compose import compose_a4_mockup
 
 # Human-readable labels for the dropdown — PaperType's own names are
 # code-style identifiers, not something to show a user directly.
@@ -43,6 +45,8 @@ class PreviewPanel(ctk.CTkFrame):
         self._on_settings_changed = on_settings_changed
         self._preview_image_ref: ctk.CTkImage | None = None
         self._current_pil_image: PIL.Image.Image | None = None
+        self._rendered_pages: list[RenderedPage] = []
+        self._page_index: int = 0
 
         title = ctk.CTkLabel(self, text="ПРЕВЬЮ", font=ctk.CTkFont(weight="bold"))
         title.pack(anchor="w", padx=8, pady=(8, 0))
@@ -60,6 +64,23 @@ class PreviewPanel(ctk.CTkFrame):
         # превью"). Re-fitting on every <Configure> (widget resize) makes it
         # track the real available area instead of a hardcoded constant.
         self.preview_area.bind("<Configure>", lambda _event: self._refresh_preview_fit())
+
+        # Preview used to only ever show rendered.pages[0] — with multiple
+        # copies, a multi-page PDF, or several imposed A5/A6 pieces, every
+        # page past the first was silently invisible. Cycle through all of
+        # them instead.
+        nav_row = ctk.CTkFrame(self, fg_color="transparent")
+        nav_row.pack(fill="x", padx=8, pady=(0, 8))
+        self.prev_page_button = ctk.CTkButton(
+            nav_row, text="◀", width=32, state="disabled", command=self._handle_prev_page
+        )
+        self.prev_page_button.pack(side="left")
+        self.page_counter_label = ctk.CTkLabel(nav_row, text="0 / 0")
+        self.page_counter_label.pack(side="left", expand=True)
+        self.next_page_button = ctk.CTkButton(
+            nav_row, text="▶", width=32, state="disabled", command=self._handle_next_page
+        )
+        self.next_page_button.pack(side="left")
 
         settings_title = ctk.CTkLabel(
             self, text="Настройки печати:", font=ctk.CTkFont(weight="bold")
@@ -143,6 +164,30 @@ class PreviewPanel(ctk.CTkFrame):
             command=lambda _choice: self._handle_settings_changed(),
         ).pack(side="left", padx=(8, 0))
 
+        # docs/imposition-spec.md §6/§Б.5 — mirror is step 1 of the
+        # transform pipeline, independent of page_format: applies whether
+        # or not imposition is active. Two independent checkboxes, not one
+        # "180°" toggle — both together is mathematically a 180° rotation
+        # (spec §6.1), but implemented as two flips, not merged with the
+        # rotation dropdown above.
+        mirror_row = ctk.CTkFrame(self, fg_color="transparent")
+        mirror_row.pack(fill="x", padx=8, pady=(0, 8))
+        ctk.CTkLabel(mirror_row, text="Отражение:").pack(side="left")
+        self.mirror_horizontal_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            mirror_row,
+            text="по горизонтали",
+            variable=self.mirror_horizontal_var,
+            command=self._handle_settings_changed,
+        ).pack(side="left", padx=(8, 0))
+        self.mirror_vertical_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            mirror_row,
+            text="по вертикали",
+            variable=self.mirror_vertical_var,
+            command=self._handle_settings_changed,
+        ).pack(side="left", padx=(8, 0))
+
         # Only shown for page_format=CUSTOM (see _handle_page_format_changed)
         # — packed here so it takes its place in the vertical stack right
         # away, but immediately pack_forget()'d since NATIVE is the default.
@@ -203,6 +248,12 @@ class PreviewPanel(ctk.CTkFrame):
     def get_rotation_degrees(self) -> int:
         return _ROTATION_BY_LABEL[self.rotation_var.get()]
 
+    def get_mirror_horizontal(self) -> bool:
+        return self.mirror_horizontal_var.get()
+
+    def get_mirror_vertical(self) -> bool:
+        return self.mirror_vertical_var.get()
+
     def get_custom_tile_width_mm(self) -> float:
         try:
             value = float(self.custom_width_entry.get().strip())
@@ -234,16 +285,63 @@ class PreviewPanel(ctk.CTkFrame):
         if self._on_settings_changed:
             self._on_settings_changed()
 
-    def show_preview(self, image: PIL.Image.Image) -> None:
-        self._current_pil_image = image
+    def show_pages(self, pages: list[RenderedPage]) -> None:
+        # No grouping here anymore — DocumentPipeline already packs
+        # multiple physical pieces (2 A5s, 4 A6s) into one RenderedPage
+        # when they fit the printer's width (pipeline.py::
+        # _pack_tiles_for_printing), so each entry already *is* one
+        # physical print pass. Showing rendered.pages 1:1 is what keeps
+        # this honest: the preview can't promise a layout printing won't
+        # actually produce.
+        self._rendered_pages = pages
+        self._page_index = 0
+        self._show_current_page()
+
+    def _show_current_page(self) -> None:
+        total = len(self._rendered_pages)
+        if total == 0:
+            self.show_message("(нет документа)")
+            return
+
+        self._page_index = max(0, min(self._page_index, total - 1))
+        page = self._rendered_pages[self._page_index]
+        # Always show the reference page (docs/imposition-spec.md §Б.4f,
+        # the user's own explicit call): compose_a4_mockup's outline is
+        # always portrait and never swapped to match content, so showing
+        # it behind an already-correct composed HALF/QUARTER sheet no
+        # longer creates a mismatch — it just places the real grid on a
+        # normal A4-shaped page, consistent with every other case (lone
+        # piece, NATIVE, CUSTOM). content_top_px/content_height_px exclude
+        # the tear-off margin from that comparison (§Б.4g) so the margin
+        # doesn't visibly poke out past the drawn outline.
+        self._current_pil_image = compose_a4_mockup(
+            page.image, page.content_width_px, page.content_top_px, page.content_height_px
+        )
         self._refresh_preview_fit()
+
+        self.page_counter_label.configure(text=f"{self._page_index + 1} / {total}")
+        self.prev_page_button.configure(state="normal" if self._page_index > 0 else "disabled")
+        self.next_page_button.configure(
+            state="normal" if self._page_index < total - 1 else "disabled"
+        )
+
+    def _handle_prev_page(self) -> None:
+        if self._page_index > 0:
+            self._page_index -= 1
+            self._show_current_page()
+
+    def _handle_next_page(self) -> None:
+        if self._page_index < len(self._rendered_pages) - 1:
+            self._page_index += 1
+            self._show_current_page()
 
     def _refresh_preview_fit(self) -> None:
         """Recomputes the displayed image size to fill as much of
         preview_area's *actual current* size as possible while preserving
         aspect ratio (upscaling small images, not just downscaling large
-        ones) — called both from show_preview() and on every <Configure>
-        so resizing the window/panel keeps the preview maximized."""
+        ones) — called both from _show_current_page() and on every
+        <Configure> so resizing the window/panel keeps the preview
+        maximized."""
         image = self._current_pil_image
         if image is None:
             return
@@ -293,5 +391,10 @@ class PreviewPanel(ctk.CTkFrame):
         # customtkinter's broken path entirely.
         self._current_pil_image = None
         self._preview_image_ref = None
+        self._rendered_pages = []
+        self._page_index = 0
         self.preview_area._label.configure(image="")
         self.preview_area.configure(text=text)
+        self.page_counter_label.configure(text="0 / 0")
+        self.prev_page_button.configure(state="disabled")
+        self.next_page_button.configure(state="disabled")

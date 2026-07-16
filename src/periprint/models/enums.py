@@ -28,23 +28,62 @@ class DocumentKind(StrEnum):
 
 
 class PageFormat(StrEnum):
-    """Target page size the rendered content is scaled down to fit (never
-    cropped — docs/stage5-ux-plan.md M5.5 postmortem #4: an earlier
-    crop-based design sliced a landscape photo in half instead of shrinking
-    it). If the scaled content is taller than one target page, it
-    paginates across as many physical pieces as it actually needs, printed
-    back to back with the existing between-page printBreak() as the cut
-    line — HALF/QUARTER don't always mean "exactly 2/4 pieces"; a source
-    shorter than one target page becomes a single piece. Deliberately NOT
-    named A5/A6 — those names are already PrinterModel's (a different
-    axis: fixed roll width per hardware model, not user-selectable per
-    job); UI labels still say "А5"/"А6" since that's the user's own
-    vocabulary."""
+    """Target frame size each rendered page is imposed into via a true 2D
+    scale-to-fit ("object-fit: contain"): scaled by
+    min(frame_width/content_width, frame_height/content_height), centered,
+    letterboxed with white on whichever axis has slack — never cropped,
+    never scaled past what fits both dimensions (docs/stage5-ux-plan.md
+    M5.5 postmortem #4: an earlier crop-based design sliced a landscape
+    photo in half instead of shrinking it; a later width-only-scale design
+    paginated tall content across multiple pieces instead of fitting it
+    into one frame). ISO 216 makes A5/A6 exact fractions of A4 (halving the
+    long side each step, preserving √2:1), so content already prepared at
+    the target size fills its frame edge to edge with no visible letterbox.
+    Each source page becomes exactly one physical piece — a multi-page PDF
+    already supplies one piece per page, no further splitting happens
+    here. The frame's own orientation follows the page's actual shape
+    *after* rotation, not just a rotation_degrees special case: a
+    landscape photo gets a landscape 210x148mm frame even at 0° rotation,
+    and rotating a page 90°/270° flips the frame the same way by changing
+    that shape — never sideways or landscape content squeezed into a
+    frame that stayed the nominal portrait shape (see
+    pipeline.py::_apply_page_format). Deliberately NOT named A5/A6 — those
+    names are already PrinterModel's (a different axis: fixed roll width
+    per hardware model, not
+    user-selectable per job); UI labels still say "А5"/"А6" since that's
+    the user's own vocabulary."""
 
     NATIVE = "native"  # today's behavior — no imposition, fills the roll width
     HALF = "half"  # target width/height = real A5 (148x210mm)
     QUARTER = "quarter"  # target width/height = real A6 (105x148mm)
     CUSTOM = "custom"  # explicit tile size in mm
+
+
+class Orientation(StrEnum):
+    """Three-valued (not a bare width>height bool) per docs/imposition-spec.md
+    §6.2: a bool comparison silently buckets a square shape into PORTRAIT,
+    which happens to look right until auto-rotation logic starts branching
+    on it. SQUARE gets its own explicit branch (auto rotation is a no-op —
+    rotating a square changes nothing) instead of an accidental one."""
+
+    LANDSCAPE = "landscape"
+    PORTRAIT = "portrait"
+    SQUARE = "square"
+
+
+class ResidualStripPolicy(StrEnum):
+    """Where the ISO 216 rounding remainder (1mm for A5/A6 — two 148mm
+    tiles are 296mm, not the nominal 297mm sheet height) is placed within
+    the grid's fixed 297mm canvas — see docs/imposition-spec.md §5.1.
+    Purely a geometry input to services/grid.py; has no visible effect on
+    Peripage output today (no fixed-length physical sheet, no cutter), but
+    keeping it explicit avoids baking TRAILING in as an unstated
+    assumption for whenever ROLL_CONTINUOUS needs real cumulative offsets."""
+
+    LEADING = "leading"
+    TRAILING = "trailing"
+    CENTERED = "centered"
+    DISTRIBUTED = "distributed"
 
 
 class JobStatus(StrEnum):

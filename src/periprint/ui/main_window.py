@@ -455,6 +455,8 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
                     page_range=self.preview_panel.get_page_range(),
                     copies=self.preview_panel.get_copies(),
                     rotation_degrees=self.preview_panel.get_rotation_degrees(),
+                    mirror_horizontal=self.preview_panel.get_mirror_horizontal(),
+                    mirror_vertical=self.preview_panel.get_mirror_vertical(),
                     page_format=self.preview_panel.get_page_format(),
                     custom_tile_width_mm=self.preview_panel.get_custom_tile_width_mm(),
                     custom_tile_height_mm=self.preview_panel.get_custom_tile_height_mm(),
@@ -533,6 +535,10 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         self._current_document.settings.rotation_degrees = (
             self.preview_panel.get_rotation_degrees()
         )
+        self._current_document.settings.mirror_horizontal = (
+            self.preview_panel.get_mirror_horizontal()
+        )
+        self._current_document.settings.mirror_vertical = self.preview_panel.get_mirror_vertical()
         self._current_document.settings.page_format = self.preview_panel.get_page_format()
         self._current_document.settings.custom_tile_width_mm = (
             self.preview_panel.get_custom_tile_width_mm()
@@ -558,7 +564,7 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
             self.preview_panel.show_message(f"Ошибка рендера: {exc}")
             return
 
-        self.preview_panel.show_preview(rendered.pages[0].image)
+        self.preview_panel.show_pages(rendered.pages)
 
     def _poll_events(self) -> None:
         while not self._event_queue.empty():
