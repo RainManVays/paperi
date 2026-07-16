@@ -212,6 +212,36 @@ def test_page_format_half_tile_wider_than_canvas_is_shrunk(tmp_path: Path) -> No
         assert page.image.width == 50
 
 
+def test_rotation_applies_per_tile_after_split_not_to_whole_page(tmp_path: Path) -> None:
+    """docs/stage5-ux-plan.md M5.5 postmortem #2: rotation_degrees used to
+    apply to the *whole page* before HALF's own split — since the split
+    always cuts by height, splitting an already-90-rotated (now landscape)
+    page sliced across the two original halves instead of along them,
+    mixing both into every tile. Fixed: split first (clean halves), then
+    rotate each tile independently. A 90 rotation from imposition's own
+    rotate_each plus a further 90 from rotation_degrees here lands each
+    tile back at its pre-imposition band shape (200x140), not some
+    mixed/reshaped page — the dimensions alone are enough to prove the
+    split happened on the *original* page, not a pre-rotated one (a
+    pre-rotated 200x280 page refit-then-split would produce a completely
+    different tile count/shape, not two clean 200x140 tiles)."""
+    document = _image_document(tmp_path, width=200, height=280)
+    document.settings = PrintSettings(
+        page_format=PageFormat.HALF,
+        rotation_degrees=90,
+        margin_top_px=0,
+        margin_bottom_px=0,
+        dithering=False,
+    )
+
+    rendered = DocumentPipeline().render_document(document, width_px=200, chunk_height_px=5000)
+
+    assert len(rendered.pages) == 2
+    for page in rendered.pages:
+        assert page.image.width == 200
+        assert page.image.height == 140
+
+
 def test_rotation_alone_rotates_the_whole_page_without_splitting(tmp_path: Path) -> None:
     document = _image_document(tmp_path, width=100, height=50)
     document.settings = PrintSettings(

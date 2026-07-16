@@ -112,35 +112,44 @@ def _shrink_tile_if_wider_than(tile: PIL.Image.Image, width_px: int) -> PIL.Imag
 def _apply_page_format(
     raw_page: PIL.Image.Image, settings: PrintSettings, width_px: int
 ) -> list[PIL.Image.Image]:
-    """docs/stage5-ux-plan.md M5.5: rotation is always applied first (works
-    standalone with page_format=NATIVE, e.g. "just rotate my landscape
-    photo"); imposition (HALF/QUARTER/CUSTOM) then splits the (possibly
-    rotated) page into N physically separate pieces, each going through
-    the caller's normal per-page processing (trim/margins/normalize/chunk)
-    independently — every piece needs its own bottom tear-off margin since
-    each is meant to be torn off on its own."""
-    page = rotate_page(raw_page, settings.rotation_degrees)
-    # Rotating 90/270 swaps width and height, so the page may no longer be
-    # exactly width_px wide — fit_to_width is a no-op if it already is.
-    page = fit_to_width(page, width_px, "fit_width")
-
+    """docs/stage5-ux-plan.md M5.5 postmortem #2 (real bug, found via a
+    hand-traced diagram after live testing, not guessed): imposition MUST
+    split the page first, while it's still in its original, unrotated
+    shape — HALF/QUARTER's split always cuts by height, so splitting an
+    *already globally-rotated* page (the previous order) cut across the
+    rotated content instead of along the original top/bottom halves,
+    mixing both halves into every tile whenever rotation_degrees was
+    anything but 0. rotation_degrees is instead applied to each tile
+    *after* it's been correctly split out — independent of imposition's
+    own fixed per-tile 90° reorientation (rotate_each), so "Поворот"
+    behaves the same regardless of which "Формат" is selected, and also
+    doubles as a manual override for split_into_tiles' own untested
+    rotation direction (flip to 180° if it comes out backwards on real
+    hardware)."""
     if settings.page_format == PageFormat.HALF:
         return [
-            _shrink_tile_if_wider_than(tile, width_px)
-            for tile in split_into_tiles(page, 2, rotate_each=True)
+            _shrink_tile_if_wider_than(rotate_page(tile, settings.rotation_degrees), width_px)
+            for tile in split_into_tiles(raw_page, 2, rotate_each=True)
         ]
     if settings.page_format == PageFormat.QUARTER:
         return [
-            _shrink_tile_if_wider_than(tile, width_px)
-            for tile in split_into_tiles(page, 4, rotate_each=True)
+            _shrink_tile_if_wider_than(rotate_page(tile, settings.rotation_degrees), width_px)
+            for tile in split_into_tiles(raw_page, 4, rotate_each=True)
         ]
     if settings.page_format == PageFormat.CUSTOM:
         tile_width_px = mm_to_px(settings.custom_tile_width_mm)
-        page = fit_to_width(page, tile_width_px, "fit_width")
+        page = fit_to_width(raw_page, tile_width_px, "fit_width")
         tile_height_px = mm_to_px(settings.custom_tile_height_mm)
         tile_count = max(1, -(-page.height // tile_height_px))  # ceil division
-        return split_into_tiles(page, tile_count, rotate_each=False)
-    return [page]  # NATIVE — rotation (if any) already applied above
+        return [
+            _shrink_tile_if_wider_than(rotate_page(tile, settings.rotation_degrees), width_px)
+            for tile in split_into_tiles(page, tile_count, rotate_each=False)
+        ]
+    # NATIVE — no imposition, rotation applies to the whole page and fills
+    # the full canvas width (the standalone "rotate my sideways photo"
+    # case) rather than only shrinking if it overflows.
+    page = rotate_page(raw_page, settings.rotation_degrees)
+    return [fit_to_width(page, width_px, "fit_width")]
 
 
 def _pad_to_canvas_width(image: PIL.Image.Image, canvas_width_px: int) -> PIL.Image.Image:
