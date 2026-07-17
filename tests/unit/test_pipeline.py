@@ -5,9 +5,9 @@ import PIL.Image
 import PIL.ImageDraw
 import pytest
 
-from periprint.models.document import DocumentItem, PrintSettings
-from periprint.models.enums import DocumentKind, PageFormat
-from periprint.services.pipeline import (
+from paperi.models.document import DocumentItem, PrintSettings
+from paperi.models.enums import DocumentKind, PageFormat
+from paperi.services.pipeline import (
     DocumentPipeline,
     UnsupportedDocumentKindError,
     _apply_page_format,
@@ -88,7 +88,7 @@ def test_render_document_canvas_width_defaults_to_width_px(tmp_path: Path) -> No
 
 
 def test_page_mode_content_length_trims_blank_pdf_tail(tmp_path: Path) -> None:
-    """periprint-spec.md §3 P1: "по длине контента" should crop a mostly
+    """paperi-spec.md §3 P1: "по длине контента" should crop a mostly
     blank PDF page down to its actual content height, unlike the default
     full_page mode which keeps the entire rendered page."""
     import fitz

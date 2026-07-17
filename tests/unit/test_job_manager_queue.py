@@ -3,10 +3,10 @@ import uuid
 
 import pytest
 
-from periprint.models.document import DocumentItem
-from periprint.models.enums import DocumentKind, JobStatus
-from periprint.models.job import PrintJob
-from periprint.services.job_manager import PrintJobManager
+from paperi.models.document import DocumentItem
+from paperi.models.enums import DocumentKind, JobStatus
+from paperi.models.job import PrintJob
+from paperi.services.job_manager import PrintJobManager
 
 
 def _make_job(status: JobStatus = JobStatus.QUEUED) -> PrintJob:

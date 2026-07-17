@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from periprint.models.enums import PrinterModel
-from periprint.services.printer_manager import PrinterManager
+from paperi.models.enums import PrinterModel
+from paperi.services.printer_manager import PrinterManager
 
 
 def test_add_profile_persists_across_instances(tmp_path: Path) -> None:

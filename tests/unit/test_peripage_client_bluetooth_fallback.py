@@ -2,8 +2,8 @@ import builtins
 
 import pytest
 
-from periprint.infra.peripage_client import PeripageConnectionError, _default_printer_factory
-from periprint.models.enums import PrinterModel
+from paperi.infra.peripage_client import PeripageConnectionError, _default_printer_factory
+from paperi.models.enums import PrinterModel
 
 
 def test_default_printer_factory_missing_bluetooth_module_raises_friendly_error(

@@ -27,7 +27,7 @@ import peripage
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 # Same font/size as infra/renderers/text_renderer.py — kept as a literal
-# duplicate here (not imported from periprint) since this script
+# duplicate here (not imported from paperi) since this script
 # deliberately stays dependency-free from the main package and runs in a
 # separate venv (.venv-bt).
 _FONT_CANDIDATES = (
@@ -104,7 +104,7 @@ def _striped_test_image(width: int, height: int) -> Image.Image:
     band = height // 6 or 1
     for i in range(0, height, band * 2):
         draw.rectangle([0, i, width, min(i + band, height)], fill=0)
-    draw.text((10, 10), "PeriPrint hw_probe chunk test", fill=0)
+    draw.text((10, 10), "Paperi hw_probe chunk test", fill=0)
     return img
 
 
@@ -337,8 +337,8 @@ def cmd_listener_break_test(args: argparse.Namespace) -> None:
     GAP C — image chunk send + immediate printBreak(60), listener
             running throughout — the exact real-job sequence.
     """
-    from periprint.infra.peripage_client import PeripageClient
-    from periprint.models.enums import PrinterModel
+    from paperi.infra.peripage_client import PeripageClient
+    from paperi.models.enums import PrinterModel
 
     client = PeripageClient(mac=args.mac, model=PrinterModel.A40)
     client.connect()
@@ -401,7 +401,7 @@ def main() -> None:
 
     p_text = sub.add_parser("text", help="Print one short ASCII line. Uses paper.")
     p_text.add_argument("mac")
-    p_text.add_argument("--text", default="PeriPrint hw_probe: hello from Stage 0")
+    p_text.add_argument("--text", default="Paperi hw_probe: hello from Stage 0")
     p_text.add_argument("--concentration", type=int, default=2, choices=[0, 1, 2])
     p_text.set_defaults(func=cmd_text)
 

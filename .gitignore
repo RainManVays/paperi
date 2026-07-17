@@ -25,7 +25,7 @@ htmlcov/
 .DS_Store
 
 # App config/state (local, not for repo)
-.config/periprint/
+.config/paperi/
 *.sqlite
 *.log
 

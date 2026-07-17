@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Paperi
+Comment=Печать на термопринтерах Peripage по Bluetooth
+Exec=paperi
+Icon=paperi
+Categories=Graphics;Printing;
+Terminal=false

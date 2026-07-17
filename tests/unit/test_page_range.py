@@ -1,6 +1,6 @@
 import pytest
 
-from periprint.utils.page_range import parse_page_range
+from paperi.utils.page_range import parse_page_range
 
 
 def test_empty_range_means_all_pages() -> None:

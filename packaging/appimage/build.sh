@@ -1,11 +1,11 @@
 #!/bin/bash
-# Builds dist/PeriPrint-x86_64.AppImage. Needs only Docker on the host —
+# Builds dist/Paperi-x86_64.AppImage. Needs only Docker on the host —
 # see docs/appimage-packaging-guide.md for the reasoning behind each step.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
-IMAGE_TAG="periprint-appimage-builder"
+IMAGE_TAG="paperi-appimage-builder"
 DIST_DIR="$REPO_ROOT/dist/appimage"
 APPIMAGETOOL="$HERE/.cache/appimagetool-x86_64.AppImage"
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
@@ -33,19 +33,19 @@ docker run --rm \
         python3.12 -m venv /tmp/build-venv
         /tmp/build-venv/bin/pip install --quiet --upgrade pip
         /tmp/build-venv/bin/pip install --quiet -e . pyinstaller
-        /tmp/build-venv/bin/pyinstaller packaging/appimage/periprint.spec \
+        /tmp/build-venv/bin/pyinstaller packaging/appimage/paperi.spec \
             --distpath /repo/dist/appimage/pyinstaller-dist \
             --workpath /tmp/pyinstaller-work \
             --noconfirm
     '
 
 echo "==> Assembling AppDir"
-APPDIR="$DIST_DIR/PeriPrint.AppDir"
+APPDIR="$DIST_DIR/Paperi.AppDir"
 mkdir -p "$APPDIR/usr/bin"
-cp -r "$DIST_DIR/pyinstaller-dist/periprint" "$APPDIR/usr/bin/periprint"
+cp -r "$DIST_DIR/pyinstaller-dist/paperi" "$APPDIR/usr/bin/paperi"
 install -m755 "$HERE/AppRun" "$APPDIR/AppRun"
-install -m644 "$HERE/periprint.desktop" "$APPDIR/periprint.desktop"
-install -m644 "$HERE/periprint.png" "$APPDIR/periprint.png"
+install -m644 "$HERE/paperi.desktop" "$APPDIR/paperi.desktop"
+install -m644 "$HERE/paperi.png" "$APPDIR/paperi.png"
 
 if [ ! -x "$APPIMAGETOOL" ]; then
     echo "==> Downloading appimagetool"
@@ -55,10 +55,10 @@ if [ ! -x "$APPIMAGETOOL" ]; then
 fi
 
 echo "==> Packing AppImage"
-VERSION="$(cd "$REPO_ROOT" && source .venv/bin/activate 2>/dev/null && python -c 'import periprint; print(periprint.__version__)' 2>/dev/null || echo dev)"
+VERSION="$(cd "$REPO_ROOT" && source .venv/bin/activate 2>/dev/null && python -c 'import paperi; print(paperi.__version__)' 2>/dev/null || echo dev)"
 (
     cd "$DIST_DIR"
-    ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$REPO_ROOT/dist/PeriPrint-x86_64.AppImage"
+    ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$REPO_ROOT/dist/Paperi-x86_64.AppImage"
 )
 
-echo "==> Done: dist/PeriPrint-x86_64.AppImage (version: $VERSION)"
+echo "==> Done: dist/Paperi-x86_64.AppImage (version: $VERSION)"

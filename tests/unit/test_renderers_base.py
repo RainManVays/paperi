@@ -1,7 +1,7 @@
 import PIL.Image
 import PIL.ImageDraw
 
-from periprint.infra.renderers.base import (
+from paperi.infra.renderers.base import (
     apply_mirror,
     fit_into_frame,
     fit_to_width,
@@ -72,7 +72,7 @@ def test_normalize_to_1bit_without_dithering_uses_threshold() -> None:
 
 def test_trim_to_content_height_crops_blank_tail() -> None:
     # A "page" with content only in a band near the top, like a short PDF
-    # page rendered at full A4 height (periprint-spec.md §3 P1 "по длине
+    # page rendered at full A4 height (paperi-spec.md §3 P1 "по длине
     # контента" mode).
     image = PIL.Image.new("L", (100, 1000), color=255)
     draw = PIL.ImageDraw.Draw(image)

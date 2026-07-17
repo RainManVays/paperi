@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=PeriPrint
-Comment=Печать на термопринтерах Peripage по Bluetooth
-Exec=periprint
-Icon=periprint
-Categories=Graphics;Printing;
-Terminal=false

@@ -1,7 +1,7 @@
 import PIL.Image
 
-from periprint.models.enums import PrinterModel
-from periprint.services.test_page import generate_test_page
+from paperi.models.enums import PrinterModel
+from paperi.services.test_page import generate_test_page
 
 
 def _generate(width_px: int = 384, canvas_width_px: int = 384) -> PIL.Image.Image:

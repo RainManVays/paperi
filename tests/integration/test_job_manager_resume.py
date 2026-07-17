@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from periprint.infra.peripage_client import PeripageClient
-from periprint.models.document import DocumentItem, PrintSettings
-from periprint.models.enums import DocumentKind, JobStatus, PaperType, PrinterModel
-from periprint.models.job import PrintJob
-from periprint.services import job_manager as job_manager_module
-from periprint.services.job_manager import PrintJobManager
-from periprint.services.pipeline import DocumentPipeline
+from paperi.infra.peripage_client import PeripageClient
+from paperi.models.document import DocumentItem, PrintSettings
+from paperi.models.enums import DocumentKind, JobStatus, PaperType, PrinterModel
+from paperi.models.job import PrintJob
+from paperi.services import job_manager as job_manager_module
+from paperi.services.job_manager import PrintJobManager
+from paperi.services.pipeline import DocumentPipeline
 from tests.integration.fakes.fake_raw_printer import FakeRawPrinter
 
 

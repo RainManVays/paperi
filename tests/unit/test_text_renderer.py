@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from periprint.infra.renderers.text_renderer import TextRenderer
+from paperi.infra.renderers.text_renderer import TextRenderer
 
 
 def test_render_returns_single_page_at_target_width(tmp_path: Path) -> None:

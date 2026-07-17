@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from periprint.models.enums import Orientation, PageFormat, ResidualStripPolicy
-from periprint.services.grid import (
+from paperi.models.enums import Orientation, PageFormat, ResidualStripPolicy
+from paperi.services.grid import (
     auto_rotation_deg,
     build_grid_config,
     build_sheets,

@@ -1,6 +1,6 @@
 import PIL.Image
 
-from periprint.ui.preview_compose import compose_a4_mockup
+from paperi.ui.preview_compose import compose_a4_mockup
 
 # A4 portrait @ PRINT_DPI=203: 210mm -> 1678px, 297mm -> 2374px. The
 # reference sheet is always this shape now — never swapped to landscape.

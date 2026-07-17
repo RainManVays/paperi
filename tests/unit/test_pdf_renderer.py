@@ -2,7 +2,7 @@ from pathlib import Path
 
 import fitz
 
-from periprint.infra.renderers.pdf_renderer import PdfRenderer
+from paperi.infra.renderers.pdf_renderer import PdfRenderer
 
 
 def _make_pdf(path: Path, page_count: int) -> None:

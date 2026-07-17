@@ -1,4 +1,4 @@
-from periprint.ui.main_window import _format_eta
+from paperi.ui.main_window import _format_eta
 
 
 def test_format_eta_under_a_minute() -> None:

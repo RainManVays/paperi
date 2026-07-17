@@ -2,7 +2,7 @@ from pathlib import Path
 
 import PIL.Image
 
-from periprint.infra.renderers.image_renderer import ImageRenderer
+from paperi.infra.renderers.image_renderer import ImageRenderer
 
 
 def test_render_fits_to_target_width(tmp_path: Path) -> None:

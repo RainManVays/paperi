@@ -5,8 +5,8 @@ import zlib
 import PIL.Image
 import pytest
 
-from periprint.infra.peripage_client import PeripageClient, _pack_1bpp_for_printer
-from periprint.models.enums import PaperType, PrinterModel
+from paperi.infra.peripage_client import PeripageClient, _pack_1bpp_for_printer
+from paperi.models.enums import PaperType, PrinterModel
 from tests.integration.fakes.fake_raw_printer import FakeRawPrinter
 
 

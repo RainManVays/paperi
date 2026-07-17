@@ -1,8 +1,8 @@
 import pytest
 
-from periprint.infra import peripage_client as peripage_client_module
-from periprint.infra.peripage_client import PeripageClient, PeripageConnectionError
-from periprint.models.enums import PrinterModel
+from paperi.infra import peripage_client as peripage_client_module
+from paperi.infra.peripage_client import PeripageClient, PeripageConnectionError
+from paperi.models.enums import PrinterModel
 from tests.integration.fakes.fake_raw_printer import FakeRawPrinter
 
 

@@ -1,7 +1,7 @@
 import PIL.Image
 import pytest
 
-from periprint.infra.renderers.base import slice_into_chunks
+from paperi.infra.renderers.base import slice_into_chunks
 
 
 def _image(height: int, width: int = 100) -> PIL.Image.Image:

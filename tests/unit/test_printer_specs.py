@@ -1,5 +1,5 @@
-from periprint.models.enums import PrinterModel
-from periprint.models.printer_specs import NATIVE_WIDTH_PX, mm_to_px, safe_content_width_px
+from paperi.models.enums import PrinterModel
+from paperi.models.printer_specs import NATIVE_WIDTH_PX, mm_to_px, safe_content_width_px
 
 
 def test_a40_safe_width_is_narrower_than_native() -> None:

@@ -1,7 +1,7 @@
 import socket
 import time
 
-from periprint.infra.printer_status_listener import (
+from paperi.infra.printer_status_listener import (
     PAUSE_WORTHY_STATUSES,
     STATUS_MEANINGS,
     PrinterStatusListener,

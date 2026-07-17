@@ -28,4 +28,4 @@ jobs:
       - name: mypy
         run: mypy src
       - name: pytest (unit + fake-transport integration only)
-        run: pytest --cov=periprint --cov-report=term-missing
+        run: pytest --cov=paperi --cov-report=term-missing

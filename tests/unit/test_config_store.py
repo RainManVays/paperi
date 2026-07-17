@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from periprint.infra.config_store import AppConfig, ConfigStore
+from paperi.infra.config_store import AppConfig, ConfigStore
 
 
 def test_load_returns_defaults_when_missing(tmp_path: Path) -> None:

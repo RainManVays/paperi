@@ -1,4 +1,4 @@
-from periprint.infra.bt.bluetoothctl_backend import (
+from paperi.infra.bt.bluetoothctl_backend import (
     DiscoveredDevice,
     _parse_devices_list_output,
     _parse_new_device_lines,

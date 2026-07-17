@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from periprint.models.enums import PrinterModel
-from periprint.models.printer_profile import PrinterProfile
+from paperi.models.enums import PrinterModel
+from paperi.models.printer_profile import PrinterProfile
 
 
 def test_round_trip_without_last_connected_at() -> None:

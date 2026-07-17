@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "periprint"
+name = "paperi"
 version = "0.1.0"
 description = "Friendly desktop GUI for printing to Peripage thermal printers over Bluetooth"
 readme = "README.md"
@@ -45,10 +45,10 @@ dev = [
 ]
 
 [project.scripts]
-periprint = "periprint.app:main"
+paperi = "paperi.app:main"
 
 [project.urls]
-Homepage = "https://github.com/RainManVays/perripage-ferrum"
+Homepage = "https://github.com/RainManVays/paperi"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -62,7 +62,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["periprint"]
+packages = ["paperi"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

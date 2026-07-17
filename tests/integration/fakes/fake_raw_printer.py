@@ -14,7 +14,7 @@ CHOOSE_PAPER_TYPE_MAGIC = bytes.fromhex("10ff1003")
 
 
 class FakeRawPrinter:
-    """Duck-types periprint.infra.raw_printer_protocol.RawPrinter without
+    """Duck-types paperi.infra.raw_printer_protocol.RawPrinter without
     touching peripage/PyBluez, so PeripageClient's retry/reconnect logic can
     be tested without any real Bluetooth stack installed."""
 

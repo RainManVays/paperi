@@ -1,4 +1,4 @@
-from periprint.infra.bt.scanner import is_peripage_device
+from paperi.infra.bt.scanner import is_peripage_device
 
 
 def test_matches_peripage_prefix() -> None:

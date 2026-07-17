@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from paperi.models.enums import DocumentKind, PageFormat, PaperType
+
+
+@dataclass
+class PrintSettings:
+    concentration: int = 1
+    break_px: int = 60
+    fit_mode: str = "fit_width"  # fit_width | actual_size | crop
+    dithering: bool = True
+    margin_top_px: int = 0
+    margin_bottom_px: int = 40
+    # Sent via PeripageClient.choose_paper_type() once per job (see
+    # docs/stage5-ux-plan.md §0.1 — the official app calls this before
+    # every print action, not once per connection). Defaults to
+    # continuous roll since that's this project's actual paper stock;
+    # only matters in practice for label-class printers.
+    paper_type: PaperType = PaperType.CONTINUOUS_ROLL
+    # paperi-spec.md §3 P1: full_page prints the whole rendered page
+    # (e.g. a full A4 height, most of it likely blank) scaled to printer
+    # width; content_length trims trailing/leading blank vertical space
+    # first (DocumentPipeline / infra/renderers/base.py::
+    # trim_to_content_height) to save tape. Not the same axis as
+    # fit_mode, which only controls horizontal scaling.
+    page_mode: str = "full_page"  # full_page | content_length
+    # paperi-spec.md §3 P1: "2-4,7" style page selection, 1-based, see
+    # utils/page_range.py::parse_page_range(). Empty means all pages —
+    # only meaningful for multi-page documents (PDF); single-page
+    # documents (image/text) always have exactly page "1" regardless.
+    page_range: str = ""
+    # N copies of whatever page_range selects (the whole document if
+    # page_range is empty) — see docs/stage5-ux-plan.md M5.2: implemented
+    # as literal repeated entries in DocumentPipeline's rendered page
+    # list, so the existing between-page printBreak() in
+    # PrintJobManager._process_job() already inserts a break between
+    # copies for free, with no separate protocol/architecture needed.
+    copies: int = 1
+    # docs/stage5-ux-plan.md M5.5: explicit whole-page rotation, independent
+    # of page_format's own per-tile rotation below. Only ever set from a
+    # UI dropdown (0/90/180/270) — no free-text entry, so no parsing/
+    # validation is needed here.
+    rotation_degrees: int = 0
+    # docs/imposition-spec.md §6.2/§Б.1: applied first in the transform
+    # pipeline (mirror -> auto-rotate -> rotation_degrees -> fit), before
+    # any rotation. Independent flags — both True is a 180° rotation in
+    # effect, but implemented as two flips, not optimized into a rotation,
+    # per the spec's "don't special-case a derivable identity" note.
+    mirror_horizontal: bool = False
+    mirror_vertical: bool = False
+    # Imposition: split the already-rendered (full roll width) page into N
+    # physically separate pieces printed back to back — see
+    # PageFormat/services/pipeline.py::_apply_page_format().
+    page_format: PageFormat = PageFormat.NATIVE
+    # Only meaningful when page_format is CUSTOM. Defaults are arbitrary
+    # but sane starting values, same spirit as copies_entry's prefilled
+    # "1" — not a claim about what any given user wants.
+    custom_tile_width_mm: float = 100.0
+    custom_tile_height_mm: float = 150.0
+
+
+@dataclass
+class DocumentItem:
+    id: str
+    source_path: str
+    kind: DocumentKind
+    settings: PrintSettings = field(default_factory=PrintSettings)
