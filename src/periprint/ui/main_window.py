@@ -15,7 +15,7 @@ from periprint.infra.config_store import ConfigStore
 from periprint.infra.history_store import HistoryEntry, HistoryStore
 from periprint.infra.peripage_client import PeripageClient, PeripageConnectionError
 from periprint.models.document import DocumentItem, PrintSettings
-from periprint.models.enums import JobStatus, PrinterModel
+from periprint.models.enums import DocumentKind, JobStatus, PrinterModel
 from periprint.models.job import PrintJob
 from periprint.models.printer_profile import PrinterProfile
 from periprint.models.printer_specs import NATIVE_WIDTH_PX, safe_content_width_px
@@ -27,6 +27,7 @@ from periprint.services.pipeline import (
     detect_document_kind,
 )
 from periprint.services.printer_manager import PrinterManager
+from periprint.services.test_page import generate_test_page
 from periprint.ui.empty_state_panel import EmptyStatePanel
 from periprint.ui.error_panel import ErrorPanel
 from periprint.ui.history_panel import HistoryPanel
@@ -35,6 +36,7 @@ from periprint.ui.printer_panel import PrinterPanel
 from periprint.ui.queue_panel import QueuePanel
 from periprint.ui.scan_panel import ScanPanel
 from periprint.ui.settings_panel import SettingsPanel
+from periprint.utils.paths import config_dir
 from periprint.utils.version import app_version
 
 _DEFAULT_PREVIEW_MODEL = PrinterModel.A40
@@ -212,6 +214,7 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
             on_scan_requested=self._handle_scan_requested,
             current_theme=self._config.theme,
             on_theme_changed=self._handle_theme_changed,
+            on_print_test_page=self._handle_print_test_page,
         )
         self.scan_panel = ScanPanel(
             self,
@@ -479,6 +482,49 @@ class MainWindow(ctk.CTk, TkinterDnD.DnDWrapper):
             self._show_expanded_state()
         self._render_and_show_preview()
         self.queue_panel.set_jobs(self._job_manager.list_jobs())
+
+    def _handle_print_test_page(self) -> None:
+        """"Печать тестовой страницы" (Settings, see settings_panel.py) —
+        a synthetic diagnostic page (services/test_page.py), not a real
+        user document, but otherwise queued/rendered/printed through the
+        exact same DocumentPipeline/PrintJobManager path as any file added
+        via _add_documents, so it's a genuine test of that path rather than
+        a separate one that could itself be untested. Uses default
+        PrintSettings() rather than whatever's currently in preview_panel —
+        a hardware sanity check shouldn't depend on unrelated in-progress
+        document settings (page format, rotation, etc.)."""
+        if self._active_profile is None:
+            self.settings_panel.set_test_page_status("Сначала выберите или добавьте принтер")
+            return
+
+        width_px, canvas_width_px, chunk_height_px = self._resolve_render_target()
+        image = generate_test_page(
+            model=self._active_profile.model,
+            content_width_px=width_px,
+            canvas_width_px=canvas_width_px,
+            profile_name=self._active_profile.name,
+            mac=self._active_profile.mac,
+            concentration=self._active_profile.default_concentration,
+        )
+        # Regenerated (overwritten) on every click — the file only exists
+        # to hand a path to DocumentPipeline's ImageRenderer, its content is
+        # entirely reproducible from the profile it was generated for.
+        test_page_path = config_dir() / "test_page.png"
+        image.save(test_page_path)
+
+        document = DocumentItem(
+            id=str(uuid.uuid4()), source_path=str(test_page_path), kind=DocumentKind.IMAGE
+        )
+        self._current_document = document
+        job = PrintJob(
+            id=str(uuid.uuid4()), document=document, printer_profile_id=self._active_profile.id
+        )
+        self._job_manager.enqueue(job, width_px, chunk_height_px, canvas_width_px)
+        self._close_settings()
+        self._render_and_show_preview()
+        self.queue_panel.set_jobs(self._job_manager.list_jobs())
+        self._job_manager.start()
+        self.status_bar.configure(text="Статус: печать тестовой страницы")
 
     def _handle_print_all(self) -> None:
         # Entry widgets (page_range/copies, see PreviewPanel) only commit

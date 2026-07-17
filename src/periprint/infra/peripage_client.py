@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 import zlib
 from collections.abc import Callable
@@ -47,8 +48,32 @@ def _patch_socket_send_recv(raw_socket: Any) -> None:
         logger.debug("Socket object does not support the send/recv patch; skipping")
 
 
+_SYSTEM_DIST_PACKAGES = "/usr/lib/python3/dist-packages"
+"""Where Debian/Ubuntu/Mint install apt packages for the system Python
+(e.g. `python3-bluez`) — see docs/BLUETOOTH_SETUP.md. A frozen/AppImage
+build doesn't have this on sys.path by default; a normal dev venv doesn't
+need it since `peripage`+PyBluez are already pip-installed there via the
+`bluetooth` extra."""
+
+
 def _default_printer_factory(mac: str, model: PrinterModel) -> RawPrinter:
-    import peripage  # lazy: only needed once we actually talk to hardware
+    # lazy: only needed once we actually talk to hardware. `peripage`
+    # depends on the compiled `bluetooth` (PyBluez) extension, which — per
+    # docs/BLUETOOTH_SETUP.md — only exists as an apt-patched build tied to
+    # the *system* Python's ABI, not a pip-installable wheel. A frozen
+    # (e.g. AppImage) build's own interpreter won't see it unless we point
+    # sys.path at the system's dist-packages, and even then the import can
+    # still fail if the frozen interpreter's minor version doesn't match
+    # the system Python's (the .so is ABI-locked to an exact minor version).
+    if _SYSTEM_DIST_PACKAGES not in sys.path:
+        sys.path.append(_SYSTEM_DIST_PACKAGES)
+    try:
+        import peripage
+    except ImportError as exc:
+        raise PeripageConnectionError(
+            "Bluetooth-модуль не найден или несовместим с этой сборкой Python. "
+            "Установите: sudo apt install python3-bluez"
+        ) from exc
 
     printer_type = peripage.PrinterType[model.value]
     return peripage.Printer(mac, printer_type)

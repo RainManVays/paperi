@@ -34,6 +34,7 @@ class SettingsPanel(ctk.CTkFrame):
         on_scan_requested: Callable[[], None] | None = None,
         current_theme: str = "dark",
         on_theme_changed: Callable[[str], None] | None = None,
+        on_print_test_page: Callable[[], None] | None = None,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
@@ -41,6 +42,7 @@ class SettingsPanel(ctk.CTkFrame):
         self._on_profiles_changed = on_profiles_changed
         self._on_scan_requested = on_scan_requested
         self._on_theme_changed = on_theme_changed
+        self._on_print_test_page = on_print_test_page
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(12, 0))
@@ -53,6 +55,20 @@ class SettingsPanel(ctk.CTkFrame):
         self.profiles_list = ctk.CTkTextbox(self, height=140)
         self.profiles_list.pack(fill="x", padx=12, pady=8)
         self._refresh_profiles_list()
+
+        # Acts on whichever printer is currently active (same profile
+        # connect/disconnect and real printing already use — see
+        # MainWindow._active_profile), not a specific saved profile row,
+        # since that's the one thing selectable from here without adding a
+        # per-row action to profiles_list.
+        self.test_page_button = ctk.CTkButton(
+            self,
+            text="🖨 Печать тестовой страницы",
+            command=self._handle_print_test_page,
+        )
+        self.test_page_button.pack(fill="x", padx=12, pady=(0, 4))
+        self.test_page_status_label = ctk.CTkLabel(self, text="", text_color="gray60")
+        self.test_page_status_label.pack(anchor="w", padx=12, pady=(0, 8))
 
         form = ctk.CTkFrame(self, fg_color="transparent")
         form.pack(fill="x", padx=12, pady=8)
@@ -94,6 +110,14 @@ class SettingsPanel(ctk.CTkFrame):
         list may have changed (a profile added from a different flow)
         since it was last visible."""
         self._refresh_profiles_list()
+        self.set_test_page_status("")
+
+    def set_test_page_status(self, text: str) -> None:
+        """Set by MainWindow after a test-page print request — this view
+        has no status_bar of its own (_hide_all_views() hides that too, see
+        main_window.py), so feedback like "выберите принтер" needs its own
+        spot here rather than silently going nowhere."""
+        self.test_page_status_label.configure(text=text)
 
     def set_scanned_device(self, device: DiscoveredDevice) -> None:
         self.name_entry.delete(0, "end")
@@ -117,6 +141,10 @@ class SettingsPanel(ctk.CTkFrame):
             lines = [f"{p.name} — {p.mac} ({p.model.value})" for p in profiles]
             self.profiles_list.insert("1.0", "\n".join(lines))
         self.profiles_list.configure(state="disabled")
+
+    def _handle_print_test_page(self) -> None:
+        if self._on_print_test_page:
+            self._on_print_test_page()
 
     def _handle_scan(self) -> None:
         if self._on_scan_requested:

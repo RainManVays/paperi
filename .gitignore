@@ -32,3 +32,6 @@ htmlcov/
 # Third-party reference material (not ours to distribute)
 *.apk
 *.xapk
+
+# AppImage build tooling, downloaded by packaging/appimage/build.sh
+packaging/appimage/.cache/
